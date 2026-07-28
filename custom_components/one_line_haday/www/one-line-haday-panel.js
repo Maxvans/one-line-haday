@@ -4,10 +4,12 @@
  * Served by the One Line HaDay integration from
  * /one_line_haday_static/one-line-haday-panel.js and registered as a
  * sidebar panel via panel_custom. All API calls hit routes registered by
- * the integration's HomeAssistantView classes under /api/one_line_haday,
- * which are authenticated by Home Assistant's own session — the browser's
- * existing HA auth cookie/token is sent automatically with same-origin
- * fetch() calls, so no custom auth header is required.
+ * the integration's HomeAssistantView classes under /api/one_line_haday.
+ * Home Assistant's REST API endpoints require a Bearer access token in
+ * the Authorization header — the browser session cookie alone is not
+ * sufficient, unlike normal page loads. The token is read live from
+ * this._hass.auth.data.access_token on every request so it stays valid
+ * across token refreshes.
  */
 class OneLineHaDayPanel extends HTMLElement {
   constructor() {
@@ -54,6 +56,12 @@ class OneLineHaDayPanel extends HTMLElement {
     return '/api/one_line_haday';
   }
 
+  get _accessToken() {
+    return (this._hass && this._hass.auth && this._hass.auth.data)
+      ? this._hass.auth.data.access_token
+      : null;
+  }
+
   get _currentUserId() {
     return (this._hass && this._hass.user && this._hass.user.id) || null;
   }
@@ -67,10 +75,12 @@ class OneLineHaDayPanel extends HTMLElement {
   }
 
   async _request(path, options = {}) {
+    const token = this._accessToken;
     const res = await fetch(`${this._apiBase}${path}`, {
       ...options,
       credentials: 'same-origin',
       headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
         ...(options.headers || {}),
       },
@@ -102,8 +112,8 @@ class OneLineHaDayPanel extends HTMLElement {
   }
 
   async _bootstrap() {
-    if (!this._currentUserId) {
-      // hass may not be ready yet on first connectedCallback; retry shortly.
+    if (!this._currentUserId || !this._accessToken) {
+      // hass may not be fully ready yet on first connectedCallback; retry shortly.
       setTimeout(() => this._bootstrap(), 300);
       return;
     }
@@ -220,13 +230,29 @@ class OneLineHaDayPanel extends HTMLElement {
 
   _exportJournal() {
     if (!this._state.journalId) return;
-    const url = `${this._apiBase}/journals/${this._state.journalId}/export`;
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `one_line_haday_${this._state.journalId}.json`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+    const token = this._accessToken;
+    fetch(`${this._apiBase}/journals/${this._state.journalId}/export`, {
+      credentials: 'same-origin',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error(`Export failed: ${res.status}`);
+        return res.blob();
+      })
+      .then((blob) => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `one_line_haday_${this._state.journalId}.json`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      })
+      .catch((err) => {
+        this._state.error = err.message;
+        this.render();
+      });
   }
 
   _attachHandlers() {
