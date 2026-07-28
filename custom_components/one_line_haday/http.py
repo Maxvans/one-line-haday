@@ -245,3 +245,106 @@ def async_register_views(hass: HomeAssistant) -> None:
     hass.http.register_view(EntryView())
     hass.http.register_view(PhotosView())
     hass.http.register_view(PhotoView())
+    hass.http.register_view(MembersView())
+    hass.http.register_view(MemberView())
+    hass.http.register_view(RetentionView())
+    hass.http.register_view(ExportView())
+
+
+class MembersView(HomeAssistantView):
+    """List, add, or update journal members. Owner-only for mutation."""
+
+    url = "/api/one_line_haday/journals/{journal_id}/members"
+    name = "api:one_line_haday:members"
+    requires_auth = True
+
+    async def get(self, request: Request, journal_id: str) -> Response:
+        hass: HomeAssistant = request.app["hass"]
+        store: OneLineHaDayStore = hass.data[DOMAIN]["store"]
+        ha_user_id = _require_user(request)
+        if store.is_member(journal_id, ha_user_id) is None:
+            raise web.HTTPForbidden(text="Not a member of this journal")
+        return self.json(store.list_members(journal_id))
+
+    async def post(self, request: Request, journal_id: str) -> Response:
+        hass: HomeAssistant = request.app["hass"]
+        store: OneLineHaDayStore = hass.data[DOMAIN]["store"]
+        ha_user_id = _require_user(request)
+        if store.is_member(journal_id, ha_user_id) != "owner":
+            raise web.HTTPForbidden(text="Only the journal owner can manage members")
+
+        body = await request.json()
+        target_user = body.get("ha_user_id")
+        role = body.get("role", "viewer")
+        if not target_user:
+            raise web.HTTPBadRequest(text="ha_user_id is required")
+        try:
+            await store.async_set_member_role(journal_id, target_user, role)
+        except ValueError as err:
+            raise web.HTTPBadRequest(text=str(err)) from err
+        return self.json({"status": "ok"})
+
+
+class MemberView(HomeAssistantView):
+    """Remove a single member from a journal. Owner-only."""
+
+    url = "/api/one_line_haday/journals/{journal_id}/members/{ha_user_id}"
+    name = "api:one_line_haday:member"
+    requires_auth = True
+
+    async def delete(self, request: Request, journal_id: str, ha_user_id: str) -> Response:
+        hass: HomeAssistant = request.app["hass"]
+        store: OneLineHaDayStore = hass.data[DOMAIN]["store"]
+        caller_id = _require_user(request)
+        if store.is_member(journal_id, caller_id) != "owner":
+            raise web.HTTPForbidden(text="Only the journal owner can manage members")
+        try:
+            await store.async_remove_member(journal_id, ha_user_id)
+        except ValueError as err:
+            raise web.HTTPBadRequest(text=str(err)) from err
+        return web.Response(status=204)
+
+
+class RetentionView(HomeAssistantView):
+    """Set a journal's retention window (owner-only)."""
+
+    url = "/api/one_line_haday/journals/{journal_id}/retention"
+    name = "api:one_line_haday:retention"
+    requires_auth = True
+
+    async def post(self, request: Request, journal_id: str) -> Response:
+        hass: HomeAssistant = request.app["hass"]
+        store: OneLineHaDayStore = hass.data[DOMAIN]["store"]
+        ha_user_id = _require_user(request)
+        if store.is_member(journal_id, ha_user_id) != "owner":
+            raise web.HTTPForbidden(text="Only the journal owner can change retention")
+        body = await request.json()
+        retention_days = body.get("retention_days")
+        try:
+            await store.async_set_retention(journal_id, retention_days)
+        except KeyError as err:
+            raise web.HTTPNotFound() from err
+        return self.json({"status": "ok"})
+
+
+class ExportView(HomeAssistantView):
+    """Export a full journal (entries, permissions, photo metadata) as JSON."""
+
+    url = "/api/one_line_haday/journals/{journal_id}/export"
+    name = "api:one_line_haday:export"
+    requires_auth = True
+
+    async def get(self, request: Request, journal_id: str) -> Response:
+        hass: HomeAssistant = request.app["hass"]
+        store: OneLineHaDayStore = hass.data[DOMAIN]["store"]
+        ha_user_id = _require_user(request)
+        if store.is_member(journal_id, ha_user_id) is None:
+            raise web.HTTPForbidden(text="Not a member of this journal")
+        export = store.export_journal(journal_id)
+        # Only include entries the caller is allowed to read.
+        export["entries"] = [e for e in export["entries"] if store.can_read_entry(e, ha_user_id)]
+        readable_ids = {e["id"] for e in export["entries"]}
+        export["photos"] = [p for p in export["photos"] if p["entry_id"] in readable_ids]
+        response = web.json_response(export)
+        response.headers["Content-Disposition"] = f'attachment; filename="one_line_haday_{journal_id}.json"'
+        return response

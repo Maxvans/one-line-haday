@@ -48,7 +48,13 @@ class OneLineHaDayStore:
                 return jid
         return await self.async_create_journal(owner_ha_user_id, "Household Journal", "household")
 
-    async def async_create_journal(self, owner_ha_user_id: str, title: str, visibility: str = "household") -> str:
+    async def async_create_journal(
+        self,
+        owner_ha_user_id: str,
+        title: str,
+        visibility: str = "household",
+        retention_days: int | None = None,
+    ) -> str:
         if visibility not in VISIBILITIES:
             raise ValueError(f"invalid visibility: {visibility}")
         jid = str(uuid.uuid4())
@@ -57,10 +63,14 @@ class OneLineHaDayStore:
             "title": title,
             "owner_ha_user_id": owner_ha_user_id,
             "visibility": visibility,
+            "retention_days": retention_days,
         }
         self._data["journal_members"].setdefault(jid, {})[owner_ha_user_id] = "owner"
         await self._save()
         return jid
+
+    def list_all_journals(self) -> list[dict]:
+        return list(self._data["journals"].values())
 
     def list_journals_for_user(self, ha_user_id: str) -> list[dict]:
         result = []
@@ -200,3 +210,65 @@ class OneLineHaDayStore:
         if photo:
             await self._save()
         return photo
+
+    # ---------------------------------------------------------------
+    # Membership management
+    # ---------------------------------------------------------------
+
+    def list_members(self, journal_id: str) -> dict:
+        return dict(self._data["journal_members"].get(journal_id, {}))
+
+    async def async_remove_member(self, journal_id: str, ha_user_id: str) -> None:
+        members = self._data["journal_members"].get(journal_id, {})
+        if ha_user_id in members:
+            if members[ha_user_id] == "owner" and list(members.values()).count("owner") <= 1:
+                raise ValueError("cannot remove the last owner of a journal")
+            members.pop(ha_user_id, None)
+            await self._save()
+
+    async def async_set_member_role(self, journal_id: str, ha_user_id: str, role: str) -> None:
+        if role not in ROLES:
+            raise ValueError(f"invalid role: {role}")
+        self._data["journal_members"].setdefault(journal_id, {})[ha_user_id] = role
+        await self._save()
+
+    # ---------------------------------------------------------------
+    # Retention & export
+    # ---------------------------------------------------------------
+
+    async def async_set_retention(self, journal_id: str, retention_days: int | None) -> None:
+        journal = self._data["journals"].get(journal_id)
+        if not journal:
+            raise KeyError(journal_id)
+        journal["retention_days"] = retention_days
+        await self._save()
+
+    def find_expired_entries(self, journal_id: str, today_iso: str) -> list[dict]:
+        """Return entries older than the journal's retention window, if any."""
+        journal = self._data["journals"].get(journal_id)
+        if not journal or not journal.get("retention_days"):
+            return []
+        import datetime
+        cutoff = (
+            datetime.date.fromisoformat(today_iso) - datetime.timedelta(days=journal["retention_days"])
+        ).isoformat()
+        return [
+            e for e in self._data["entries"].values()
+            if e["journal_id"] == journal_id and e["entry_date"] < cutoff
+        ]
+
+    def export_journal(self, journal_id: str) -> dict:
+        """Return a full JSON-serializable export of a journal: entries, permissions, photos."""
+        entries = [e for e in self._data["entries"].values() if e["journal_id"] == journal_id]
+        entry_ids = {e["id"] for e in entries}
+        photos = [p for p in self._data["photos"].values() if p["entry_id"] in entry_ids]
+        permissions = {
+            eid: perms for eid, perms in self._data["entry_permissions"].items() if eid in entry_ids
+        }
+        return {
+            "journal": self._data["journals"].get(journal_id),
+            "members": self._data["journal_members"].get(journal_id, {}),
+            "entries": entries,
+            "entry_permissions": permissions,
+            "photos": photos,
+        }

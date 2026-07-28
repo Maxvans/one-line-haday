@@ -15,11 +15,16 @@ class OneLineHaDayPanel extends HTMLElement {
     this._state = {
       journalId: null,
       entries: [],
+      members: {},
       draft: '',
       visibility: 'household',
       filterUser: 'all',
       loading: false,
       error: null,
+      showMembers: false,
+      newMemberId: '',
+      newMemberRole: 'viewer',
+      retentionDays: '',
     };
   }
 
@@ -57,6 +62,10 @@ class OneLineHaDayPanel extends HTMLElement {
     return (this._hass && this._hass.user && this._hass.user.name) || 'Unknown user';
   }
 
+  get _isOwner() {
+    return this._state.members[this._currentUserId] === 'owner';
+  }
+
   async _request(path, options = {}) {
     const res = await fetch(`${this._apiBase}${path}`, {
       ...options,
@@ -79,26 +88,34 @@ class OneLineHaDayPanel extends HTMLElement {
     return res.status === 204 ? null : res.json();
   }
 
-  async _bootstrap() {
-    if (!this._currentUserId) {
-      // hass may not be ready yet on first connectedCallback; retry shortly.
-      setTimeout(() => this._bootstrap(), 300);
-      return;
-    }
+  async _withLoading(fn) {
     this._state.loading = true;
     this.render();
     try {
-      const journals = await this._request('/journals');
-      const journal = journals[0];
-      if (!journal) throw new Error('No journal available');
-      this._state.journalId = journal.id;
-      await this._loadEntries();
+      await fn();
     } catch (err) {
       this._state.error = err.message;
     } finally {
       this._state.loading = false;
       this.render();
     }
+  }
+
+  async _bootstrap() {
+    if (!this._currentUserId) {
+      // hass may not be ready yet on first connectedCallback; retry shortly.
+      setTimeout(() => this._bootstrap(), 300);
+      return;
+    }
+    await this._withLoading(async () => {
+      const journals = await this._request('/journals');
+      const journal = journals[0];
+      if (!journal) throw new Error('No journal available');
+      this._state.journalId = journal.id;
+      this._state.retentionDays = journal.retention_days || '';
+      await this._loadMembers();
+      await this._loadEntries();
+    });
   }
 
   async _loadEntries() {
@@ -110,11 +127,14 @@ class OneLineHaDayPanel extends HTMLElement {
     this._state.entries = await this._request(`/entries?${params.toString()}`);
   }
 
+  async _loadMembers() {
+    if (!this._state.journalId) return;
+    this._state.members = await this._request(`/journals/${this._state.journalId}/members`);
+  }
+
   async _saveEntry() {
     if (!this._state.draft.trim() || !this._state.journalId) return;
-    this._state.loading = true;
-    this.render();
-    try {
+    await this._withLoading(async () => {
       await this._request('/entries', {
         method: 'POST',
         body: JSON.stringify({
@@ -126,56 +146,87 @@ class OneLineHaDayPanel extends HTMLElement {
       });
       this._state.draft = '';
       await this._loadEntries();
-    } catch (err) {
-      this._state.error = err.message;
-    } finally {
-      this._state.loading = false;
-      this.render();
-    }
+    });
   }
 
   async _uploadPhoto(entryId, file) {
     const form = new FormData();
     form.append('file', file);
-    this._state.loading = true;
-    this.render();
-    try {
+    await this._withLoading(async () => {
       await this._request(`/entries/${entryId}/photos`, { method: 'POST', body: form });
       await this._loadEntries();
-    } catch (err) {
-      this._state.error = err.message;
-    } finally {
-      this._state.loading = false;
-      this.render();
-    }
+    });
   }
 
   async _deletePhoto(photoId) {
-    this._state.loading = true;
-    this.render();
-    try {
+    await this._withLoading(async () => {
       await this._request(`/photos/${photoId}`, { method: 'DELETE' });
       await this._loadEntries();
-    } catch (err) {
-      this._state.error = err.message;
-    } finally {
-      this._state.loading = false;
-      this.render();
-    }
+    });
   }
 
   async _deleteEntry(entryId) {
-    this._state.loading = true;
-    this.render();
-    try {
+    await this._withLoading(async () => {
       await this._request(`/entries/${entryId}`, { method: 'DELETE' });
       await this._loadEntries();
-    } catch (err) {
-      this._state.error = err.message;
-    } finally {
-      this._state.loading = false;
+    });
+  }
+
+  async _addMember() {
+    const userId = this._state.newMemberId.trim();
+    if (!userId) return;
+    await this._withLoading(async () => {
+      await this._request(`/journals/${this._state.journalId}/members`, {
+        method: 'POST',
+        body: JSON.stringify({ ha_user_id: userId, role: this._state.newMemberRole }),
+      });
+      this._state.newMemberId = '';
+      await this._loadMembers();
+    });
+  }
+
+  async _removeMember(userId) {
+    await this._withLoading(async () => {
+      await this._request(`/journals/${this._state.journalId}/members/${userId}`, { method: 'DELETE' });
+      await this._loadMembers();
+    });
+  }
+
+  async _changeMemberRole(userId, role) {
+    await this._withLoading(async () => {
+      await this._request(`/journals/${this._state.journalId}/members`, {
+        method: 'POST',
+        body: JSON.stringify({ ha_user_id: userId, role }),
+      });
+      await this._loadMembers();
+    });
+  }
+
+  async _saveRetention() {
+    const raw = this._state.retentionDays;
+    const retention_days = raw === '' ? null : Number(raw);
+    if (retention_days !== null && (!Number.isInteger(retention_days) || retention_days <= 0)) {
+      this._state.error = 'Retention must be a positive whole number of days, or empty to disable.';
       this.render();
+      return;
     }
+    await this._withLoading(async () => {
+      await this._request(`/journals/${this._state.journalId}/retention`, {
+        method: 'POST',
+        body: JSON.stringify({ retention_days }),
+      });
+    });
+  }
+
+  _exportJournal() {
+    if (!this._state.journalId) return;
+    const url = `${this._apiBase}/journals/${this._state.journalId}/export`;
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `one_line_haday_${this._state.journalId}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
   }
 
   _attachHandlers() {
@@ -199,16 +250,7 @@ class OneLineHaDayPanel extends HTMLElement {
     if (filterSelect) {
       filterSelect.addEventListener('change', async (e) => {
         this._state.filterUser = e.target.value;
-        this._state.loading = true;
-        this.render();
-        try {
-          await this._loadEntries();
-        } catch (err) {
-          this._state.error = err.message;
-        } finally {
-          this._state.loading = false;
-          this.render();
-        }
+        await this._withLoading(() => this._loadEntries());
       });
     }
 
@@ -244,11 +286,61 @@ class OneLineHaDayPanel extends HTMLElement {
         this.render();
       });
     }
+
+    const toggleMembers = root.getElementById('toggle-members');
+    if (toggleMembers) {
+      toggleMembers.addEventListener('click', () => {
+        this._state.showMembers = !this._state.showMembers;
+        this.render();
+      });
+    }
+
+    const newMemberIdInput = root.getElementById('new-member-id');
+    if (newMemberIdInput) {
+      newMemberIdInput.value = this._state.newMemberId;
+      newMemberIdInput.addEventListener('input', (e) => { this._state.newMemberId = e.target.value; });
+    }
+
+    const newMemberRoleSelect = root.getElementById('new-member-role');
+    if (newMemberRoleSelect) {
+      newMemberRoleSelect.value = this._state.newMemberRole;
+      newMemberRoleSelect.addEventListener('change', (e) => { this._state.newMemberRole = e.target.value; });
+    }
+
+    const addMemberBtn = root.getElementById('add-member-btn');
+    if (addMemberBtn) addMemberBtn.addEventListener('click', () => this._addMember());
+
+    root.querySelectorAll('[data-remove-member]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const userId = btn.getAttribute('data-remove-member');
+        if (confirm(`Remove ${userId} from this journal?`)) this._removeMember(userId);
+      });
+    });
+
+    root.querySelectorAll('[data-member-role]').forEach((select) => {
+      select.addEventListener('change', (e) => {
+        const userId = select.getAttribute('data-member-role');
+        this._changeMemberRole(userId, e.target.value);
+      });
+    });
+
+    const retentionInput = root.getElementById('retention-input');
+    if (retentionInput) {
+      retentionInput.value = this._state.retentionDays;
+      retentionInput.addEventListener('input', (e) => { this._state.retentionDays = e.target.value; });
+    }
+
+    const saveRetentionBtn = root.getElementById('save-retention-btn');
+    if (saveRetentionBtn) saveRetentionBtn.addEventListener('click', () => this._saveRetention());
+
+    const exportBtn = root.getElementById('export-btn');
+    if (exportBtn) exportBtn.addEventListener('click', () => this._exportJournal());
   }
 
   _authorOptions() {
     const authors = new Map();
     this._state.entries.forEach((e) => authors.set(e.author_ha_user_id, e.author_ha_user_id));
+    Object.keys(this._state.members).forEach((u) => authors.set(u, u));
     return Array.from(authors.keys());
   }
 
@@ -268,7 +360,7 @@ class OneLineHaDayPanel extends HTMLElement {
         <div class="entry-head">
           <strong>${entry.entry_date}</strong>
           <span class="pill">${entry.visibility}</span>
-          <span class="small">${isMine ? 'You' : entry.author_ha_user_id}</span>
+          <span class="small">${isMine ? 'You' : this._escape(entry.author_ha_user_id)}</span>
           ${isMine ? `<button class="ghost" data-delete-entry="${entry.id}">Delete</button>` : ''}
         </div>
         <p>${this._escape(entry.body)}</p>
@@ -278,6 +370,53 @@ class OneLineHaDayPanel extends HTMLElement {
           Add photo
           <input type="file" accept="image/jpeg,image/png,image/webp,image/heic" data-photo-input data-entry-id="${entry.id}" hidden />
         </label>` : ''}
+      </div>`;
+  }
+
+  _renderMemberRow(userId, role) {
+    const isSelf = userId === this._currentUserId;
+    return `
+      <div class="member-row">
+        <span class="small">${isSelf ? `${this._escape(userId)} (you)` : this._escape(userId)}</span>
+        ${this._isOwner && !isSelf ? `
+          <select data-member-role="${userId}">
+            <option value="viewer" ${role === 'viewer' ? 'selected' : ''}>Viewer</option>
+            <option value="co_editor" ${role === 'co_editor' ? 'selected' : ''}>Co-editor</option>
+            <option value="owner" ${role === 'owner' ? 'selected' : ''}>Owner</option>
+          </select>
+          <button class="ghost" data-remove-member="${userId}">Remove</button>
+        ` : `<span class="pill">${role}</span>`}
+      </div>`;
+  }
+
+  _renderMembersPanel() {
+    const members = Object.entries(this._state.members);
+    return `
+      <div class="card">
+        <h3>Members</h3>
+        ${members.map(([uid, role]) => this._renderMemberRow(uid, role)).join('')}
+        ${this._isOwner ? `
+        <div class="row" style="margin-top:12px">
+          <input id="new-member-id" placeholder="Home Assistant user ID" style="flex:1" />
+          <select id="new-member-role" style="width:auto">
+            <option value="viewer">Viewer</option>
+            <option value="co_editor">Co-editor</option>
+            <option value="owner">Owner</option>
+          </select>
+          <button id="add-member-btn">Add</button>
+        </div>
+        <p class="small" style="margin-top:8px">Find a user's ID under Settings &rarr; People &rarr; select person.</p>
+
+        <h3 style="margin-top:20px">Retention</h3>
+        <div class="row">
+          <input id="retention-input" type="number" min="1" placeholder="Days (empty = keep forever)" style="flex:1" />
+          <button id="save-retention-btn">Save</button>
+        </div>
+        <p class="small" style="margin-top:8px">Entries older than this are automatically purged, including their photos.</p>
+        ` : '<p class="small">Only the journal owner can manage members and retention.</p>'}
+
+        <h3 style="margin-top:20px">Export</h3>
+        <button id="export-btn">Download my visible entries as JSON</button>
       </div>`;
   }
 
@@ -304,7 +443,7 @@ class OneLineHaDayPanel extends HTMLElement {
         textarea{min-height:110px;resize:vertical}
         button{padding:10px 14px;border-radius:12px;border:0;background:var(--primary-color);color:var(--text-primary-color);cursor:pointer}
         button:disabled{opacity:0.5;cursor:not-allowed}
-        button.ghost{background:transparent;color:var(--error-color,#c62828);border:1px solid var(--divider-color)}
+        button.ghost{background:transparent;color:var(--error-color,#c62828);border:1px solid var(--divider-color);width:auto}
         .entry{padding:14px;border:1px solid var(--divider-color);border-radius:14px;background:var(--secondary-background-color);margin-top:10px}
         .entry-head{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap}
         .small{font-size:12px;color:var(--secondary-text-color)}
@@ -314,14 +453,18 @@ class OneLineHaDayPanel extends HTMLElement {
         .photo-thumb img{width:100%;height:100%;object-fit:cover}
         .photo-remove{position:absolute;top:2px;right:2px;width:20px;height:20px;padding:0;border-radius:999px;line-height:1;background:rgba(0,0,0,0.6);color:#fff}
         .error{display:flex;justify-content:space-between;align-items:center;color:#fff;background:var(--error-color,#c62828);border-radius:12px;padding:10px 14px;font-size:13px}
-        .error button{background:transparent;color:#fff;padding:2px 8px}
+        .error button{background:transparent;color:#fff;padding:2px 8px;width:auto}
         .filter-row{display:flex;gap:8px;align-items:center}
         .empty{padding:24px;text-align:center;color:var(--secondary-text-color)}
+        .member-row{display:flex;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--divider-color)}
+        .member-row select{width:140px}
+        .toggle-link{background:transparent;color:var(--primary-color);width:auto;padding:0;text-decoration:underline}
       </style>
       <div class="wrap">
         <div class="row">
           <span class="pill">Signed in as ${this._escape(this._currentUserName)}</span>
           <span class="pill">${this._state.loading ? 'Syncing…' : 'Up to date'}</span>
+          <button class="toggle-link" id="toggle-members">${this._state.showMembers ? 'Hide' : 'Manage'} members &amp; retention</button>
         </div>
         ${this._state.error ? `<div class="error"><span>${this._escape(this._state.error)}</span><button id="dismiss-error" aria-label="Dismiss">&times;</button></div>` : ''}
         <div class="grid">
@@ -342,7 +485,7 @@ class OneLineHaDayPanel extends HTMLElement {
               <label class="small">Filter by author</label>
               <select id="filter-select">
                 <option value="all" ${this._state.filterUser === 'all' ? 'selected' : ''}>Everyone</option>
-                ${authors.map((a) => `<option value="${a}" ${this._state.filterUser === a ? 'selected' : ''}>${a === this._currentUserId ? 'Me' : a}</option>`).join('')}
+                ${authors.map((a) => `<option value="${a}" ${this._state.filterUser === a ? 'selected' : ''}>${a === this._currentUserId ? 'Me' : this._escape(a)}</option>`).join('')}
               </select>
             </div>
 
@@ -350,10 +493,12 @@ class OneLineHaDayPanel extends HTMLElement {
               ? this._state.entries.map((e) => this._renderEntry(e)).join('')
               : '<div class="empty">No entries yet. Write the first line for today.</div>'}
           </div>
-          <div class="card">
-            <h3>Permissions</h3>
-            <div class="small">Household entries are visible to every journal member. Private entries are visible only to their author. Shared entries are visible only to the people explicitly granted access.</div>
-          </div>
+          ${this._state.showMembers
+            ? this._renderMembersPanel()
+            : `<div class="card">
+                <h3>Permissions</h3>
+                <div class="small">Household entries are visible to every journal member. Private entries are visible only to their author. Shared entries are visible only to the people explicitly granted access.</div>
+              </div>`}
         </div>
       </div>`;
     this._attachHandlers();

@@ -39,6 +39,7 @@ with the following top-level shape:
 - **entries** — `{id, journal_id, author_ha_user_id, entry_date, body, visibility}`
 - **entry_permissions** — `{entry_id: {ha_user_id: role}}` (used for `shared` entries)
 - **photos** — `{id, entry_id, filename, mime_type, relative_path}`
+- **retention_days** — stored on each journal and used by the cleanup job
 
 Photo binaries live outside the JSON store, under
 `<config>/www/one_line_haday/photos/<entry_id>/`, and are served through
@@ -69,8 +70,7 @@ route was needed for reads.
 
 ## Known limitations (v1)
 
-- No automated tests for the ACL logic in `storage.py`.
-- No export or retention job, despite `visibility`/journal metadata being
-  in place to support one later.
-- No UI for managing journal membership beyond auto-adding the first
-  authenticated user who opens the panel.
+- No browser automation tests yet for the custom panel UI.
+- Membership management uses Home Assistant user IDs instead of friendly
+  display-name lookup.
+- Per-entry edit history is not implemented.

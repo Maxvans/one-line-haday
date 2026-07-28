@@ -70,8 +70,8 @@ Home Assistant Core, Container, and OS installs alike.
 | Private / shared / household visibility | Done — enforced on read and write |
 | Home Assistant identity as author | Done — uses HA's authenticated session user, no custom auth |
 | Installable via HACS | Done — native custom integration, no Supervisor/Docker dependency |
-| Export / retention jobs | Not yet implemented |
-| Automated tests | Not yet implemented |
+| Export / retention jobs | Done — owner-only JSON export + scheduled retention cleanup |
+| Automated tests | Done — pytest coverage for ACL, membership, retention, and export logic |
 
 ## Known limitations (v1)
 
