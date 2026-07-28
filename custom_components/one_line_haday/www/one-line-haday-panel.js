@@ -57,51 +57,23 @@ class OneLineHaDayPanel extends HTMLElement {
   }
 
   /**
-   * Get a current Home Assistant access token through the auth manager.
-   * This avoids relying on private auth.data fields and works through
-   * Nabu Casa, reverse proxies, and direct local connections.
+   * Use Home Assistant's authenticated frontend API connection.
+   *
+   * `callApi` owns access-token refresh and session authentication. Custom
+   * panels must not manually read token internals or call protected routes
+   * through fetch.
    */
-  async _getAccessToken() {
-    if (!this._hass?.auth || typeof this._hass.auth.getAccessToken !== 'function') {
-      throw new Error('Home Assistant authentication is not available yet.');
-    }
-    return this._hass.auth.getAccessToken();
-  }
-
-  get _currentUserId() {
-    return (this._hass && this._hass.user && this._hass.user.id) || null;
-  }
-
-  get _currentUserName() {
-    return (this._hass && this._hass.user && this._hass.user.name) || 'Unknown user';
-  }
-
-  get _isOwner() {
-    return this._state.members[this._currentUserId] === 'owner';
-  }
-
   async _request(path, options = {}) {
-    const token = await this._getAccessToken();
-    const res = await fetch(`${this._apiBase}${path}`, {
-      ...options,
-      credentials: 'same-origin',
-      headers: {
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
-        ...(options.headers || {}),
-      },
-    });
-    if (!res.ok) {
-      let detail = '';
-      try {
-        const body = await res.json();
-        detail = body.message || body.detail || '';
-      } catch (e) {
-        detail = await res.text().catch(() => '');
-      }
-      throw new Error(detail || `Request failed: ${res.status}`);
+    if (!this._hass?.callApi) {
+      throw new Error('Home Assistant connection is not available yet.');
     }
-    return res.status === 204 ? null : res.json();
+
+    const method = (options.method || 'GET').toLowerCase();
+    const body = options.body
+      ? (typeof options.body === 'string' ? JSON.parse(options.body) : options.body)
+      : undefined;
+
+    return this._hass.callApi(method, `${this._apiBase}${path}`, body);
   }
 
   async _withLoading(fn) {
@@ -118,7 +90,7 @@ class OneLineHaDayPanel extends HTMLElement {
   }
 
   async _bootstrap() {
-    if (!this._currentUserId || !this._hass?.auth || typeof this._hass.auth.getAccessToken !== 'function') {
+    if (!this._currentUserId || !this._hass?.callApi) {
       // hass may not be fully ready yet on first connectedCallback; retry shortly.
       setTimeout(() => this._bootstrap(), 300);
       return;
@@ -234,31 +206,26 @@ class OneLineHaDayPanel extends HTMLElement {
     });
   }
 
-  _exportJournal() {
+  async _exportJournal() {
     if (!this._state.journalId) return;
-    const token = await this._getAccessToken();
-    fetch(`${this._apiBase}/journals/${this._state.journalId}/export`, {
-      credentials: 'same-origin',
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error(`Export failed: ${res.status}`);
-        return res.blob();
-      })
-      .then((blob) => {
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `one_line_haday_${this._state.journalId}.json`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
-      })
-      .catch((err) => {
-        this._state.error = err.message;
-        this.render();
+
+    await this._withLoading(async () => {
+      // Export is JSON, so it can use the same authenticated API connection.
+      const data = await this._request(
+        `/journals/${this._state.journalId}/export`
+      );
+      const blob = new Blob([JSON.stringify(data, null, 2)], {
+        type: 'application/json',
       });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `one-line-haday-${this._state.journalId}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    });
   }
 
   _attachHandlers() {
