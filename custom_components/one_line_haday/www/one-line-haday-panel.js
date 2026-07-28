@@ -56,10 +56,16 @@ class OneLineHaDayPanel extends HTMLElement {
     return '/api/one_line_haday';
   }
 
-  get _accessToken() {
-    return (this._hass && this._hass.auth && this._hass.auth.data)
-      ? this._hass.auth.data.access_token
-      : null;
+  /**
+   * Get a current Home Assistant access token through the auth manager.
+   * This avoids relying on private auth.data fields and works through
+   * Nabu Casa, reverse proxies, and direct local connections.
+   */
+  async _getAccessToken() {
+    if (!this._hass?.auth || typeof this._hass.auth.getAccessToken !== 'function') {
+      throw new Error('Home Assistant authentication is not available yet.');
+    }
+    return this._hass.auth.getAccessToken();
   }
 
   get _currentUserId() {
@@ -75,7 +81,7 @@ class OneLineHaDayPanel extends HTMLElement {
   }
 
   async _request(path, options = {}) {
-    const token = this._accessToken;
+    const token = await this._getAccessToken();
     const res = await fetch(`${this._apiBase}${path}`, {
       ...options,
       credentials: 'same-origin',
@@ -112,7 +118,7 @@ class OneLineHaDayPanel extends HTMLElement {
   }
 
   async _bootstrap() {
-    if (!this._currentUserId || !this._accessToken) {
+    if (!this._currentUserId || !this._hass?.auth || typeof this._hass.auth.getAccessToken !== 'function') {
       // hass may not be fully ready yet on first connectedCallback; retry shortly.
       setTimeout(() => this._bootstrap(), 300);
       return;
@@ -230,7 +236,7 @@ class OneLineHaDayPanel extends HTMLElement {
 
   _exportJournal() {
     if (!this._state.journalId) return;
-    const token = this._accessToken;
+    const token = await this._getAccessToken();
     fetch(`${this._apiBase}/journals/${this._state.journalId}/export`, {
       credentials: 'same-origin',
       headers: token ? { Authorization: `Bearer ${token}` } : {},
