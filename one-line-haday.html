@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>One Line HaDay</title>
+  <link href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700&f[]=zodiak@400,700&display=swap" rel="stylesheet">
+  <style>
+    :root, [data-theme="light"] {
+      --text-xs: clamp(0.75rem, 0.7rem + 0.25vw, 0.875rem);
+      --text-sm: clamp(0.875rem, 0.8rem + 0.35vw, 1rem);
+      --text-base: clamp(1rem, 0.95rem + 0.25vw, 1.125rem);
+      --text-lg: clamp(1.125rem, 1rem + 0.75vw, 1.5rem);
+      --text-xl: clamp(1.5rem, 1.2rem + 1.25vw, 2.25rem);
+      --space-1: 0.25rem; --space-2: 0.5rem; --space-3: 0.75rem; --space-4: 1rem;
+      --space-5: 1.25rem; --space-6: 1.5rem; --space-8: 2rem; --space-10: 2.5rem;
+      --space-12: 3rem; --space-16: 4rem;
+      --color-bg: #f7f6f2; --color-surface: #f9f8f5; --color-surface-2: #fbfbf9;
+      --color-surface-offset: #edeae5; --color-border: #d4d1ca; --color-divider: #dcd9d5;
+      --color-text: #28251d; --color-text-muted: #7a7974; --color-text-faint: #bab9b4;
+      --color-text-inverse: #f9f8f4; --color-primary: #01696f; --color-primary-hover: #0c4e54;
+      --color-primary-highlight: #cedcd8; --color-error: #a12c7b; --color-success: #437a22;
+      --radius-sm: 0.375rem; --radius-md: 0.5rem; --radius-lg: 0.75rem; --radius-xl: 1rem; --radius-full: 9999px;
+      --shadow-sm: 0 1px 2px rgba(40,37,29,.06); --shadow-md: 0 8px 24px rgba(40,37,29,.08);
+      --font-body: 'Satoshi', 'Inter', sans-serif; --font-display: 'Zodiak', Georgia, serif;
+      --transition-interactive: 180ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    [data-theme="dark"] {
+      --color-bg: #171614; --color-surface: #1c1b19; --color-surface-2: #201f1d;
+      --color-surface-offset: #22211f; --color-border: #393836; --color-divider: #262523;
+      --color-text: #cdccca; --color-text-muted: #979693; --color-text-faint: #6a6967;
+      --color-text-inverse: #2b2a28; --color-primary: #4f98a3; --color-primary-hover: #227f8b;
+      --color-primary-highlight: #313b3b; --color-error: #d163a7; --color-success: #6daa45;
+      --shadow-sm: 0 1px 2px rgba(0,0,0,.2); --shadow-md: 0 12px 32px rgba(0,0,0,.35);
+    }
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    html{-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+    body{min-height:100dvh;font-family:var(--font-body);font-size:var(--text-base);line-height:1.6;color:var(--color-text);background:var(--color-bg)}
+    img{display:block;max-width:100%;height:auto}
+    button,input,select,textarea{font:inherit;color:inherit}
+    button{cursor:pointer;border:none;background:none}
+    a{color:inherit}
+    :focus-visible{outline:2px solid var(--color-primary);outline-offset:3px;border-radius:var(--radius-sm)}
+
+    .app-shell{display:grid;grid-template-columns:280px 1fr;min-height:100dvh}
+    .sidebar{background:var(--color-surface);border-right:1px solid var(--color-border);padding:var(--space-6);display:flex;flex-direction:column;gap:var(--space-6)}
+    .logo{display:flex;align-items:center;gap:var(--space-3)}
+    .logo-mark{width:38px;height:38px;border-radius:12px;background:linear-gradient(135deg,var(--color-primary-highlight),var(--color-surface-offset));display:grid;place-items:center;color:var(--color-primary)}
+    .logo h1{font-family:var(--font-display);font-size:var(--text-lg);line-height:1.1}
+    .logo p{font-size:var(--text-xs);color:var(--color-text-muted)}
+    .nav-group{display:grid;gap:var(--space-2)}
+    .nav-label{font-size:var(--text-xs);text-transform:uppercase;letter-spacing:.08em;color:var(--color-text-muted)}
+    .nav-btn{display:flex;align-items:center;gap:var(--space-3);padding:var(--space-3) var(--space-4);border-radius:var(--radius-lg);font-size:var(--text-sm);text-align:left;min-height:44px}
+    .nav-btn.active,.nav-btn:hover{background:var(--color-surface-offset)}
+    .sidebar-footer{margin-top:auto;display:grid;gap:var(--space-3)}
+    .theme-toggle,.new-journal{display:flex;align-items:center;justify-content:center;gap:var(--space-2);padding:var(--space-3) var(--space-4);min-height:44px;border-radius:var(--radius-lg)}
+    .theme-toggle{border:1px solid var(--color-border)}
+    .new-journal{background:var(--color-primary);color:var(--color-text-inverse)}
+
+    .main{display:grid;grid-template-rows:auto 1fr;min-width:0}
+    .topbar{display:flex;justify-content:space-between;align-items:center;gap:var(--space-4);padding:var(--space-5) var(--space-6);border-bottom:1px solid var(--color-border);background:color-mix(in srgb, var(--color-surface) 88%, transparent);backdrop-filter:blur(12px);position:sticky;top:0;z-index:10}
+    .topbar h2{font-size:var(--text-xl);line-height:1.1}
+    .topbar p{font-size:var(--text-sm);color:var(--color-text-muted)}
+    .topbar-actions{display:flex;gap:var(--space-3);align-items:center;flex-wrap:wrap}
+    .pill{display:inline-flex;align-items:center;gap:var(--space-2);padding:var(--space-2) var(--space-3);border-radius:var(--radius-full);background:var(--color-surface-offset);font-size:var(--text-xs)}
+
+    .content{padding:var(--space-6);display:grid;gap:var(--space-6);align-content:start}
+    .grid{display:grid;grid-template-columns:1.45fr .95fr;gap:var(--space-6)}
+    .card{background:var(--color-surface);border:1px solid rgba(40,37,29,.12);border-radius:var(--radius-xl);box-shadow:var(--shadow-sm)}
+    .card-head{display:flex;justify-content:space-between;align-items:flex-start;gap:var(--space-4);padding:var(--space-5);border-bottom:1px solid var(--color-divider)}
+    .card-head h3{font-size:var(--text-lg);line-height:1.15}
+    .card-head p{font-size:var(--text-sm);color:var(--color-text-muted)}
+    .card-body{padding:var(--space-5)}
+
+    .journal-switcher,.permission-row,.toolbar,.chip-row,.entry-meta,.section-stack{display:flex;gap:var(--space-3);flex-wrap:wrap}
+    .chip{padding:var(--space-2) var(--space-3);border-radius:var(--radius-full);background:var(--color-surface-offset);font-size:var(--text-xs);border:1px solid transparent}
+    .chip.active{background:var(--color-primary-highlight);color:var(--color-primary);border-color:color-mix(in srgb, var(--color-primary) 22%, transparent)}
+    .toolbar{justify-content:space-between;align-items:center;margin-bottom:var(--space-4)}
+
+    .entry-form{display:grid;gap:var(--space-4)}
+    .form-field{display:grid;gap:var(--space-2)}
+    .label{font-size:var(--text-sm);font-weight:700}
+    .hint{font-size:var(--text-xs);color:var(--color-text-muted)}
+    .input,.textarea,.select{width:100%;border:1px solid var(--color-border);background:var(--color-surface-2);border-radius:var(--radius-lg);padding:var(--space-3) var(--space-4)}
+    .textarea{min-height:110px;resize:vertical}
+    .uploader{border:1px dashed var(--color-border);border-radius:var(--radius-lg);padding:var(--space-5);background:var(--color-surface-2);display:grid;gap:var(--space-3)}
+    .photo-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--space-3)}
+    .photo{aspect-ratio:1;border-radius:var(--radius-lg);background:linear-gradient(135deg,var(--color-surface-offset),var(--color-primary-highlight));padding:var(--space-3);display:flex;flex-direction:column;justify-content:space-between;min-height:120px}
+    .photo strong{font-size:var(--text-sm)}
+    .photo span{font-size:var(--text-xs);color:var(--color-text-muted)}
+
+    .actions{display:flex;gap:var(--space-3);flex-wrap:wrap}
+    .btn{min-height:44px;padding:var(--space-3) var(--space-4);border-radius:var(--radius-lg);font-size:var(--text-sm);font-weight:700}
+    .btn-primary{background:var(--color-primary);color:var(--color-text-inverse)}
+    .btn-primary:hover{background:var(--color-primary-hover)}
+    .btn-secondary{background:var(--color-surface-offset);border:1px solid var(--color-border)}
+    .btn-danger{background:color-mix(in srgb, var(--color-error) 12%, var(--color-surface));color:var(--color-error);border:1px solid color-mix(in srgb, var(--color-error) 22%, transparent)}
+
+    .entry-list{display:grid;gap:var(--space-4)}
+    .entry{padding:var(--space-4);border-radius:var(--radius-lg);background:var(--color-surface-2);border:1px solid var(--color-border);display:grid;gap:var(--space-3)}
+    .entry-top{display:flex;justify-content:space-between;gap:var(--space-4);align-items:flex-start}
+    .entry-author{display:flex;align-items:center;gap:var(--space-3)}
+    .avatar{width:40px;height:40px;border-radius:50%;display:grid;place-items:center;background:var(--color-primary-highlight);color:var(--color-primary);font-weight:700;font-size:var(--text-sm)}
+    .entry-author strong{display:block;font-size:var(--text-sm)}
+    .entry-author span,.entry-side small{font-size:var(--text-xs);color:var(--color-text-muted)}
+    .entry p{max-width:70ch}
+    .permission-table{display:grid;gap:var(--space-3)}
+    .perm-item{display:grid;grid-template-columns:1.2fr .8fr auto;gap:var(--space-3);align-items:center;padding:var(--space-3) var(--space-4);background:var(--color-surface-2);border:1px solid var(--color-border);border-radius:var(--radius-lg)}
+    .perm-item small{color:var(--color-text-muted)}
+
+    .mini-list{display:grid;gap:var(--space-3)}
+    .mini-item{padding:var(--space-4);border-radius:var(--radius-lg);background:var(--color-surface-2);border:1px solid var(--color-border)}
+    .mini-item h4{font-size:var(--text-sm);margin-bottom:var(--space-1)}
+    .mini-item p{font-size:var(--text-xs);color:var(--color-text-muted)}
+
+    .cleanup-grid{display:grid;gap:var(--space-3)}
+    .cleanup-item{display:flex;justify-content:space-between;align-items:center;gap:var(--space-3);padding:var(--space-4);border-radius:var(--radius-lg);background:var(--color-surface-2);border:1px solid var(--color-border)}
+    .cleanup-item div strong{display:block;font-size:var(--text-sm)}
+    .cleanup-item div span{font-size:var(--text-xs);color:var(--color-text-muted)}
+
+    @media (max-width: 1080px){
+      .app-shell{grid-template-columns:1fr}
+      .sidebar{border-right:none;border-bottom:1px solid var(--color-border)}
+      .grid{grid-template-columns:1fr}
+    }
+    @media (max-width: 720px){
+      .content,.topbar,.sidebar{padding:var(--space-4)}
+      .topbar{align-items:flex-start;flex-direction:column}
+      .photo-grid{grid-template-columns:1fr 1fr}
+      .perm-item,.cleanup-item{grid-template-columns:1fr;align-items:flex-start}
+    }
+    @media (max-width: 520px){
+      .photo-grid{grid-template-columns:1fr}
+      .entry-top{flex-direction:column}
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="logo">
+        <div class="logo-mark" aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-label="One Line HaDay logo">
+            <rect x="3.5" y="4" width="17" height="16.5" rx="3"></rect>
+            <path d="M8 2.8v3.3M16 2.8v3.3M7.2 10.2h9.6M7.2 14h5.8"></path>
+          </svg>
+        </div>
+        <div>
+          <h1>One Line HaDay</h1>
+          <p>Home Assistant journal panel</p>
+        </div>
+      </div>
+
+      <div class="nav-group">
+        <div class="nav-label">Views</div>
+        <button class="nav-btn active">Today</button>
+        <button class="nav-btn">Timeline</button>
+        <button class="nav-btn">Shared with me</button>
+        <button class="nav-btn">Cleanup & export</button>
+      </div>
+
+      <div class="nav-group">
+        <div class="nav-label">Journals</div>
+        <button class="nav-btn active">Household</button>
+        <button class="nav-btn">My private journal</button>
+        <button class="nav-btn">Baby prep notes</button>
+      </div>
+
+      <div class="sidebar-footer">
+        <button class="new-journal">+ New journal</button>
+        <button class="theme-toggle" data-theme-toggle aria-label="Switch theme">Toggle theme</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <h2>Functional daily journaling for the whole household</h2>
+          <p>First version focused on shared writing, privacy, photos, and clean administration.</p>
+        </div>
+        <div class="topbar-actions">
+          <span class="pill">3 Home Assistant users</span>
+          <span class="pill">Local-first</span>
+          <span class="pill">Household + private ACLs</span>
+        </div>
+      </header>
+
+      <section class="content">
+        <div class="grid">
+          <article class="card">
+            <div class="card-head">
+              <div>
+                <h3>Write today’s entry</h3>
+                <p>Supports shared journals, private journals, co-editors, viewers, and multiple photos per entry.</p>
+              </div>
+              <div class="chip-row">
+                <span class="chip active">July 27, 2026</span>
+                <span class="chip">2 existing entries</span>
+              </div>
+            </div>
+            <div class="card-body">
+              <div class="toolbar">
+                <div class="journal-switcher">
+                  <span class="chip active">Household</span>
+                  <span class="chip">Private</span>
+                  <span class="chip">Shared</span>
+                </div>
+                <div class="chip-row">
+                  <span class="chip active">Author: Max</span>
+                  <span class="chip">Filter: all users</span>
+                </div>
+              </div>
+
+              <form class="entry-form">
+                <div class="form-field">
+                  <label class="label" for="entry">One line</label>
+                  <textarea id="entry" class="textarea" placeholder="Write today’s thought, event, or note.">Installed the first One Line HaDay prototype and sketched the permission model for household and private journals.</textarea>
+                  <div class="hint">Optimized for one short note, but allows a bit more context when needed.</div>
+                </div>
+
+                <div class="permission-row">
+                  <span class="chip active">Visibility: household</span>
+                  <span class="chip">Owner only</span>
+                  <span class="chip">Shared custom ACL</span>
+                </div>
+
+                <div class="form-field">
+                  <label class="label">Entry permissions</label>
+                  <div class="permission-table">
+                    <div class="perm-item">
+                      <div>
+                        <strong>Max van S.</strong>
+                        <small>Owner</small>
+                      </div>
+                      <span class="chip active">Can edit</span>
+                      <button type="button" class="btn btn-secondary">Change</button>
+                    </div>
+                    <div class="perm-item">
+                      <div>
+                        <strong>Partner</strong>
+                        <small>Household user</small>
+                      </div>
+                      <span class="chip">View only</span>
+                      <button type="button" class="btn btn-secondary">Change</button>
+                    </div>
+                    <div class="perm-item">
+                      <div>
+                        <strong>Shared family journal</strong>
+                        <small>Inherited journal permission</small>
+                      </div>
+                      <span class="chip active">Co-editor</span>
+                      <button type="button" class="btn btn-secondary">Change</button>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="form-field">
+                  <label class="label">Photos</label>
+                  <div class="uploader">
+                    <div class="section-stack">
+                      <span class="chip active">Secure storage path</span>
+                      <span class="chip">/media/one-line-haday/household/2026/07/27/</span>
+                    </div>
+                    <p class="hint">Multiple images per entry. In the real Home Assistant version, files should be served through an authenticated backend endpoint instead of public media links.</p>
+                    <div class="photo-grid">
+                      <div class="photo"><strong>kitchen-counter.jpg</strong><span>Visible to household</span></div>
+                      <div class="photo"><strong>garden-evening.jpg</strong><span>Visible to household</span></div>
+                      <div class="photo"><strong>ultrasound-note.png</strong><span>Custom shared ACL</span></div>
+                    </div>
+                    <div class="actions">
+                      <button type="button" class="btn btn-secondary">Add photos</button>
+                      <button type="button" class="btn btn-secondary">Set photo permissions</button>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="actions">
+                  <button type="button" class="btn btn-primary">Save entry</button>
+                  <button type="button" class="btn btn-secondary">Save as draft</button>
+                  <button type="button" class="btn btn-danger">Delete this entry</button>
+                </div>
+              </form>
+            </div>
+          </article>
+
+          <aside class="section-stack" style="display:grid; gap: var(--space-6);">
+            <article class="card">
+              <div class="card-head">
+                <div>
+                  <h3>Active journal</h3>
+                  <p>Household journal with share settings inherited by default.</p>
+                </div>
+              </div>
+              <div class="card-body mini-list">
+                <div class="mini-item">
+                  <h4>Default visibility</h4>
+                  <p>Household members can read; Max and Partner can edit.</p>
+                </div>
+                <div class="mini-item">
+                  <h4>Retention policy</h4>
+                  <p>Keep forever by default, configurable per journal and per export rule.</p>
+                </div>
+                <div class="mini-item">
+                  <h4>Export</h4>
+                  <p>Planned JSON/CSV/ZIP export including metadata and permission-aware photo manifests.</p>
+                </div>
+              </div>
+            </article>
+
+            <article class="card">
+              <div class="card-head">
+                <div>
+                  <h3>Cleanup tools</h3>
+                  <p>Destructive actions grouped by scope with explicit confirmations.</p>
+                </div>
+              </div>
+              <div class="card-body cleanup-grid">
+                <div class="cleanup-item">
+                  <div><strong>Delete single entry</strong><span>Remove text, ACL rules, and linked photos.</span></div>
+                  <button class="btn btn-danger">Run</button>
+                </div>
+                <div class="cleanup-item">
+                  <div><strong>Delete one day</strong><span>Remove every entry for a selected date in the current journal.</span></div>
+                  <button class="btn btn-danger">Run</button>
+                </div>
+                <div class="cleanup-item">
+                  <div><strong>Delete journal</strong><span>Archive/export first, then delete journal, entries, shares, and photos.</span></div>
+                  <button class="btn btn-danger">Run</button>
+                </div>
+                <div class="cleanup-item">
+                  <div><strong>Delete by user</strong><span>Clean all entries for one Home Assistant user within this journal.</span></div>
+                  <button class="btn btn-danger">Run</button>
+                </div>
+              </div>
+            </article>
+          </aside>
+        </div>
+
+        <article class="card">
+          <div class="card-head">
+            <div>
+              <h3>Today’s entries</h3>
+              <p>Grouped by date, filtered by Home Assistant user, with privacy state visible at a glance.</p>
+            </div>
+            <div class="chip-row">
+              <span class="chip active">All users</span>
+              <span class="chip">Only Max</span>
+              <span class="chip">Only Partner</span>
+            </div>
+          </div>
+          <div class="card-body entry-list">
+            <article class="entry">
+              <div class="entry-top">
+                <div class="entry-author">
+                  <div class="avatar">M</div>
+                  <div>
+                    <strong>Max van S.</strong>
+                    <span>Household journal · Can edit</span>
+                  </div>
+                </div>
+                <div class="entry-side">
+                  <small>2 photos · last edited 21:18</small>
+                </div>
+              </div>
+              <p>Installed the first One Line HaDay prototype and sketched the permission model for household and private journals.</p>
+              <div class="entry-meta">
+                <span class="chip active">Household visible</span>
+                <span class="chip">Co-editor: Partner</span>
+              </div>
+            </article>
+
+            <article class="entry">
+              <div class="entry-top">
+                <div class="entry-author">
+                  <div class="avatar">P</div>
+                  <div>
+                    <strong>Partner</strong>
+                    <span>Shared journal · View only for Max</span>
+                  </div>
+                </div>
+                <div class="entry-side">
+                  <small>1 photo · last edited 20:51</small>
+                </div>
+              </div>
+              <p>Picked the shared journal structure so future family notes can stay visible without mixing into private reflections.</p>
+              <div class="entry-meta">
+                <span class="chip">Shared custom ACL</span>
+                <span class="chip">Photo access restricted</span>
+              </div>
+            </article>
+          </div>
+        </article>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    (function(){
+      const toggle = document.querySelector('[data-theme-toggle]');
+      const root = document.documentElement;
+      let theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      root.setAttribute('data-theme', theme);
+      const updateToggle = () => toggle.textContent = theme === 'dark' ? 'Light mode' : 'Dark mode';
+      updateToggle();
+      toggle.addEventListener('click', () => {
+        theme = theme === 'dark' ? 'light' : 'dark';
+        root.setAttribute('data-theme', theme);
+        updateToggle();
+      });
+    })();
+  </script>
+</body>
+</html>
