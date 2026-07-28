@@ -1,65 +1,92 @@
 # One Line HaDay
 
-A "one line a day" journaling add-on for Home Assistant. Multiple household
-members can write entries for the same day, filter entries by author, attach
-photos, and control who can see each entry.
+A shared "one line a day" journal for Home Assistant. Every household
+member writes a short entry for today, filters entries by author, and
+attaches photos — all from a sidebar panel, installed as a native Home
+Assistant integration via HACS.
 
-## Status: functional v1
+## Install via HACS
 
-This version includes a working backend and a Home Assistant panel UI.
-It is not yet a published/signed add-on — see [Next steps](#next-steps).
+This is a **custom integration**, not a Supervisor add-on, so it installs
+through HACS's "Integration" category.
+
+1. In Home Assistant, open **HACS**.
+2. Click the three dots (top right) → **Custom repositories**.
+3. Add `https://github.com/Maxvans/one-line-haday`, category **Integration**.
+4. Find **One Line HaDay** in HACS and click **Download**.
+5. Restart Home Assistant.
+6. Go to **Settings → Devices & Services → Add Integration**, search for
+   **One Line HaDay**, and confirm setup.
+7. A new **One Line HaDay** entry appears in the sidebar.
+
+No Docker, no exposed ports, no Supervisor required — this works on
+Home Assistant Core, Container, and OS installs alike.
 
 ## What's included
 
-- FastAPI backend (`addon/app.py`) with SQLite persistence for journals,
-  entries, ACLs (owner / co-editor / viewer), and photos
-- Authentication via the `X-Remote-User-Id` header, populated by Home
-  Assistant's ingress proxy — no anonymous access
-- Visibility model per entry: `household` (all journal members),
-  `private` (author only), `shared` (explicit grantees only)
-- Entry CRUD: create, list (filterable by author and date range), edit, delete
-- Photo upload/list/delete per entry, served only to users with read access
-  to the parent entry
-- Home Assistant custom panel (`panel/one-line-haday-panel.js`) wired to the
-  live API: write today's entry, filter by author, upload photos, delete entries
-- Multi-arch add-on packaging (`addon/build.yaml`, `addon/Dockerfile`) using
-  Home Assistant's official Python base images
-- Ingress-enabled add-on config (`addon/config.yaml`) — no exposed host port,
-  sidebar icon/title driven by Home Assistant itself
+- `custom_components/one_line_haday/` — the integration:
+  - `storage.py` — journal/entry/ACL/photo persistence using Home
+    Assistant's built-in `Store` helper (`.storage/one_line_haday`),
+    included automatically in Home Assistant backups.
+  - `http.py` — REST routes (`/api/one_line_haday/...`) registered on
+    Home Assistant's own `http` component; every route requires an
+    authenticated Home Assistant session, so there's no separate login
+    or token to manage.
+  - `__init__.py` — sets up storage, HTTP routes, and registers the
+    sidebar panel via `panel_custom`.
+  - `config_flow.py` — a simple "Add Integration" setup flow.
+  - `www/one-line-haday-panel.js` — the sidebar panel UI.
+- `hacs.json` — HACS repository metadata.
+- `docs/architecture.md` — design notes and requirements traceability.
 
-## Repository layout
+## How multi-user journaling works
 
-```
-addon/
-  app.py            FastAPI backend
-  config.yaml       Home Assistant add-on manifest (ingress, map, arch)
-  build.yaml        Multi-arch base image mapping
-  Dockerfile        Add-on container build
-  requirements.txt  Python dependencies
-panel/
-  one-line-haday-panel.js   Home Assistant custom panel frontend
-docs/
-  architecture.md   Design notes and requirements traceability
-```
+- Every Home Assistant user who opens the panel is automatically added to
+  a shared "Household Journal" the first time they load it.
+- Each entry is tagged with its author's Home Assistant user ID, so
+  multiple people can write entries for the same date without collisions.
+- Entries can be:
+  - **Household** — visible to every journal member.
+  - **Private** — visible only to the author.
+  - **Shared** — visible only to explicitly granted users.
+- Only the author (or someone explicitly granted `owner`/`co_editor`) can
+  edit or delete an entry.
+
+## Photos
+
+- Each entry supports one or more photo attachments (JPEG, PNG, WebP, HEIC;
+  15 MB limit per file).
+- Photos are stored under `<config>/www/one_line_haday/photos/<entry_id>/`
+  and served via Home Assistant's standard `/local/` static path.
+- Only users with write access to an entry can add or remove its photos.
 
 ## Requirements traceability
 
 | Requirement | Status |
 |---|---|
-| Multiple users write to the same day | Implemented — entries are per-author rows scoped to a shared journal |
-| Filter by user | Implemented — `GET /entries?author_ha_user_id=...` and panel filter dropdown |
-| Photo upload per entry | Implemented — multipart upload, size/type validated, ACL-checked retrieval |
-| Private vs shared vs household visibility | Implemented — enforced in both list and read/write checks |
-| Home Assistant identity as author | Implemented — backend requires `X-Remote-User-Id`; panel reads `hass.user` |
-| Installable as an add-on | Partial — packaging is add-on-shaped but not yet published to a store repo |
+| Multiple users write to the same day | Done — entries are per-author rows in a shared journal |
+| Filter by user | Done — `GET /entries?author_ha_user_id=...` + panel dropdown |
+| Photo upload per entry | Done — multipart upload, type/size validated, ACL-checked |
+| Private / shared / household visibility | Done — enforced on read and write |
+| Home Assistant identity as author | Done — uses HA's authenticated session user, no custom auth |
+| Installable via HACS | Done — native custom integration, no Supervisor/Docker dependency |
 | Export / retention jobs | Not yet implemented |
 | Automated tests | Not yet implemented |
 
-## Next steps
+## Known limitations (v1)
 
-1. Add a `repository.yaml` at the repo root so this can be added as a Home
-   Assistant add-on repository.
-2. Add automated tests for the ACL logic in `app.py` (this is the highest-risk
-   area for regressions).
-3. Implement retention/export jobs referenced in `journals.retention_days`.
-4. Add a translations file (`translations/en.yaml`) for the add-on config UI.
+- No automated tests yet for the ACL logic in `storage.py`.
+- No export or retention tooling.
+- Journal membership is currently auto-granted to any authenticated HA
+  user on first visit; a UI for inviting/removing members is not yet built.
+
+## Local development
+
+```bash
+# Symlink into a dev Home Assistant config for live testing
+ln -s $(pwd)/custom_components/one_line_haday \
+      /path/to/homeassistant/config/custom_components/one_line_haday
+```
+
+Restart Home Assistant after changes to Python files. Panel JS changes
+under `www/` are picked up on browser refresh (hard-refresh to bypass cache).
