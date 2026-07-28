@@ -1,0 +1,13 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up One Line HaDay",
+        "description": "Add a shared one-line-a-day journal panel to your Home Assistant sidebar. Every household member can write today's line, filter entries by author, and attach photos."
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "One Line HaDay is already configured."
+    }
+  }
+}
