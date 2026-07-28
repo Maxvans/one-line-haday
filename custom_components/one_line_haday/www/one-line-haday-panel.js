@@ -5,11 +5,11 @@
  * /one_line_haday_static/one-line-haday-panel.js and registered as a
  * sidebar panel via panel_custom. All API calls hit routes registered by
  * the integration's HomeAssistantView classes under /api/one_line_haday.
- * Home Assistant's REST API endpoints require a Bearer access token in
- * the Authorization header — the browser session cookie alone is not
- * sufficient, unlike normal page loads. The token is read live from
- * this._hass.auth.data.access_token on every request so it stays valid
- * across token refreshes.
+ *
+ * Authentication is handled entirely by Home Assistant's frontend through
+ * hass.callApi(). Do not use fetch() or read auth tokens manually — the
+ * frontend manages token refresh and this works for local, reverse-proxy,
+ * and Nabu Casa connections without any extra configuration.
  */
 class OneLineHaDayPanel extends HTMLElement {
   constructor() {
@@ -53,15 +53,29 @@ class OneLineHaDayPanel extends HTMLElement {
   }
 
   get _apiBase() {
-    return '/api/one_line_haday';
+    // Path prefix for all integration API routes — no trailing slash.
+    return 'one_line_haday';
+  }
+
+  get _currentUserId() {
+    return (this._hass && this._hass.user && this._hass.user.id) || null;
+  }
+
+  get _currentUserName() {
+    return (this._hass && this._hass.user && this._hass.user.name) || 'Unknown user';
+  }
+
+  get _isOwner() {
+    return this._state.members[this._currentUserId] === 'owner';
   }
 
   /**
-   * Use Home Assistant's authenticated frontend API connection.
+   * Route an API call through Home Assistant's authenticated frontend
+   * connection. hass.callApi() manages the session, access-token refresh,
+   * and works transparently for local, Nabu Casa, and reverse-proxy setups.
    *
-   * `callApi` owns access-token refresh and session authentication. Custom
-   * panels must not manually read token internals or call protected routes
-   * through fetch.
+   * @param {string} path  - API sub-path, e.g. '/journals' or '/entries?journal_id=…'
+   * @param {object} options - { method, body } where body is a plain object or FormData
    */
   async _request(path, options = {}) {
     if (!this._hass?.callApi) {
@@ -90,8 +104,8 @@ class OneLineHaDayPanel extends HTMLElement {
   }
 
   async _bootstrap() {
+    // Wait until hass is fully ready with a valid callApi connection.
     if (!this._currentUserId || !this._hass?.callApi) {
-      // hass may not be fully ready yet on first connectedCallback; retry shortly.
       setTimeout(() => this._bootstrap(), 300);
       return;
     }
@@ -141,7 +155,10 @@ class OneLineHaDayPanel extends HTMLElement {
     const form = new FormData();
     form.append('file', file);
     await this._withLoading(async () => {
-      await this._request(`/entries/${entryId}/photos`, { method: 'POST', body: form });
+      await this._request(`/entries/${entryId}/photos`, {
+        method: 'POST',
+        body: form,
+      });
       await this._loadEntries();
     });
   }
@@ -175,7 +192,9 @@ class OneLineHaDayPanel extends HTMLElement {
 
   async _removeMember(userId) {
     await this._withLoading(async () => {
-      await this._request(`/journals/${this._state.journalId}/members/${userId}`, { method: 'DELETE' });
+      await this._request(`/journals/${this._state.journalId}/members/${userId}`, {
+        method: 'DELETE',
+      });
       await this._loadMembers();
     });
   }
@@ -192,7 +211,7 @@ class OneLineHaDayPanel extends HTMLElement {
 
   async _saveRetention() {
     const raw = this._state.retentionDays;
-    const retention_days = raw === '' ? null : Number(raw);
+    const retention_days = raw ? Number(raw) : null;
     if (retention_days !== null && (!Number.isInteger(retention_days) || retention_days <= 0)) {
       this._state.error = 'Retention must be a positive whole number of days, or empty to disable.';
       this.render();
@@ -210,10 +229,9 @@ class OneLineHaDayPanel extends HTMLElement {
     if (!this._state.journalId) return;
 
     await this._withLoading(async () => {
-      // Export is JSON, so it can use the same authenticated API connection.
-      const data = await this._request(
-        `/journals/${this._state.journalId}/export`
-      );
+      // Export returns JSON; use the same authenticated API path as every
+      // other panel action instead of an unauthenticated browser fetch.
+      const data = await this._request(`/journals/${this._state.journalId}/export`);
       const blob = new Blob([JSON.stringify(data, null, 2)], {
         type: 'application/json',
       });
@@ -230,6 +248,7 @@ class OneLineHaDayPanel extends HTMLElement {
 
   _attachHandlers() {
     const root = this.shadowRoot;
+
     const textarea = root.getElementById('draft-input');
     if (textarea) {
       textarea.value = this._state.draft;
@@ -279,20 +298,13 @@ class OneLineHaDayPanel extends HTMLElement {
     });
 
     const dismissError = root.getElementById('dismiss-error');
-    if (dismissError) {
-      dismissError.addEventListener('click', () => {
-        this._state.error = null;
-        this.render();
-      });
-    }
+    if (dismissError) dismissError.addEventListener('click', () => { this._state.error = null; this.render(); });
 
     const toggleMembers = root.getElementById('toggle-members');
-    if (toggleMembers) {
-      toggleMembers.addEventListener('click', () => {
-        this._state.showMembers = !this._state.showMembers;
-        this.render();
-      });
-    }
+    if (toggleMembers) toggleMembers.addEventListener('click', () => {
+      this._state.showMembers = !this._state.showMembers;
+      this.render();
+    });
 
     const newMemberIdInput = root.getElementById('new-member-id');
     if (newMemberIdInput) {
@@ -336,7 +348,7 @@ class OneLineHaDayPanel extends HTMLElement {
     if (exportBtn) exportBtn.addEventListener('click', () => this._exportJournal());
   }
 
-  _authorOptions() {
+  get _authorOptions() {
     const authors = new Map();
     this._state.entries.forEach((e) => authors.set(e.author_ha_user_id, e.author_ha_user_id));
     Object.keys(this._state.members).forEach((u) => authors.set(u, u));
@@ -344,79 +356,70 @@ class OneLineHaDayPanel extends HTMLElement {
   }
 
   _renderPhoto(photo, canWrite) {
-    return `
-      <div class="photo-thumb">
-        <img src="${photo.url}" alt="Attached photo" loading="lazy" />
-        ${canWrite ? `<button class="photo-remove" data-delete-photo="${photo.id}" aria-label="Remove photo">&times;</button>` : ''}
-      </div>`;
+    return `<div class="photo-thumb">
+      <img src="${photo.url}" alt="Attached photo" loading="lazy">
+      ${canWrite ? `<button class="photo-remove" data-delete-photo="${photo.id}" aria-label="Remove photo">&times;</button>` : ''}
+    </div>`;
   }
 
   _renderEntry(entry) {
     const isMine = entry.author_ha_user_id === this._currentUserId;
     const photos = entry.photos || [];
-    return `
-      <div class="entry">
-        <div class="entry-head">
-          <strong>${entry.entry_date}</strong>
-          <span class="pill">${entry.visibility}</span>
-          <span class="small">${isMine ? 'You' : this._escape(entry.author_ha_user_id)}</span>
-          ${isMine ? `<button class="ghost" data-delete-entry="${entry.id}">Delete</button>` : ''}
-        </div>
-        <p>${this._escape(entry.body)}</p>
-        ${photos.length ? `<div class="photo-row">${photos.map((p) => this._renderPhoto(p, isMine)).join('')}</div>` : ''}
-        ${isMine ? `
-        <label class="small photo-add">
-          Add photo
-          <input type="file" accept="image/jpeg,image/png,image/webp,image/heic" data-photo-input data-entry-id="${entry.id}" hidden />
-        </label>` : ''}
-      </div>`;
+    return `<div class="entry">
+      <div class="entry-head">
+        <strong>${entry.entry_date}</strong>
+        <span class="pill">${entry.visibility}</span>
+        <span class="small">${isMine ? 'You' : this._escape(entry.author_ha_user_id)}</span>
+        ${isMine ? `<button class="ghost" data-delete-entry="${entry.id}">Delete</button>` : ''}
+      </div>
+      <p>${this._escape(entry.body)}</p>
+      ${photos.length ? `<div class="photo-row">${photos.map((p) => this._renderPhoto(p, isMine)).join('')}</div>` : ''}
+      ${isMine ? `<label class="small photo-add">Add photo<input type="file" accept="image/jpeg,image/png,image/webp,image/heic" data-photo-input data-entry-id="${entry.id}" hidden></label>` : ''}
+    </div>`;
   }
 
   _renderMemberRow(userId, role) {
     const isSelf = userId === this._currentUserId;
-    return `
-      <div class="member-row">
-        <span class="small">${isSelf ? `${this._escape(userId)} (you)` : this._escape(userId)}</span>
-        ${this._isOwner && !isSelf ? `
-          <select data-member-role="${userId}">
-            <option value="viewer" ${role === 'viewer' ? 'selected' : ''}>Viewer</option>
-            <option value="co_editor" ${role === 'co_editor' ? 'selected' : ''}>Co-editor</option>
-            <option value="owner" ${role === 'owner' ? 'selected' : ''}>Owner</option>
-          </select>
-          <button class="ghost" data-remove-member="${userId}">Remove</button>
-        ` : `<span class="pill">${role}</span>`}
-      </div>`;
+    return `<div class="member-row">
+      <span class="small">${isSelf ? `${this._escape(userId)} (you)` : this._escape(userId)}</span>
+      ${this._isOwner && !isSelf ? `
+        <select data-member-role="${userId}">
+          <option value="viewer" ${role === 'viewer' ? 'selected' : ''}>Viewer</option>
+          <option value="co-editor" ${role === 'co-editor' ? 'selected' : ''}>Co-editor</option>
+          <option value="owner" ${role === 'owner' ? 'selected' : ''}>Owner</option>
+        </select>
+        <button class="ghost" data-remove-member="${userId}">Remove</button>
+      ` : `<span class="pill">${role}</span>`}
+    </div>`;
   }
 
   _renderMembersPanel() {
     const members = Object.entries(this._state.members);
-    return `
-      <div class="card">
-        <h3>Members</h3>
-        ${members.map(([uid, role]) => this._renderMemberRow(uid, role)).join('')}
-        ${this._isOwner ? `
+    return `<div class="card">
+      <h3>Members</h3>
+      ${members.map(([uid, role]) => this._renderMemberRow(uid, role)).join('')}
+      ${this._isOwner ? `
         <div class="row" style="margin-top:12px">
-          <input id="new-member-id" placeholder="Home Assistant user ID" style="flex:1" />
+          <input id="new-member-id" placeholder="Home Assistant user ID" style="flex:1">
           <select id="new-member-role" style="width:auto">
             <option value="viewer">Viewer</option>
-            <option value="co_editor">Co-editor</option>
+            <option value="co-editor">Co-editor</option>
             <option value="owner">Owner</option>
           </select>
           <button id="add-member-btn">Add</button>
         </div>
         <p class="small" style="margin-top:8px">Find a user's ID under Settings &rarr; People &rarr; select person.</p>
-
         <h3 style="margin-top:20px">Retention</h3>
         <div class="row">
-          <input id="retention-input" type="number" min="1" placeholder="Days (empty = keep forever)" style="flex:1" />
+          <input id="retention-input" type="number" min="1" placeholder="Days (empty = keep forever)" style="flex:1">
           <button id="save-retention-btn">Save</button>
         </div>
         <p class="small" style="margin-top:8px">Entries older than this are automatically purged, including their photos.</p>
-        ` : '<p class="small">Only the journal owner can manage members and retention.</p>'}
-
+        <p class="small">Only the journal owner can manage members and retention.</p>
         <h3 style="margin-top:20px">Export</h3>
         <button id="export-btn">Download my visible entries as JSON</button>
-      </div>`;
+      ` : ''}
+    </div>`;
   }
 
   _escape(str) {
@@ -427,59 +430,58 @@ class OneLineHaDayPanel extends HTMLElement {
 
   render() {
     if (!this.shadowRoot) return;
-    const authors = this._authorOptions();
+    const authors = this._authorOptions;
     this.shadowRoot.innerHTML = `
       <style>
-        :host{display:block;font-family:var(--primary-font-family,Arial);padding:16px;color:var(--primary-text-color)}
-        .wrap{max-width:1200px;margin:0 auto;display:grid;gap:16px}
-        .grid{display:grid;grid-template-columns:1.4fr .9fr;gap:16px}
-        @media (max-width: 800px){.grid{grid-template-columns:1fr}}
-        .card{background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:16px;padding:16px}
-        .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-        .pill{padding:6px 10px;border-radius:999px;background:var(--secondary-background-color);font-size:12px}
-        textarea,input,select,button{font:inherit}
-        textarea,input,select{width:100%;box-sizing:border-box;padding:12px;border-radius:12px;border:1px solid var(--divider-color);background:var(--input-fill-color,transparent);color:inherit}
-        textarea{min-height:110px;resize:vertical}
-        button{padding:10px 14px;border-radius:12px;border:0;background:var(--primary-color);color:var(--text-primary-color);cursor:pointer}
-        button:disabled{opacity:0.5;cursor:not-allowed}
-        button.ghost{background:transparent;color:var(--error-color,#c62828);border:1px solid var(--divider-color);width:auto}
-        .entry{padding:14px;border:1px solid var(--divider-color);border-radius:14px;background:var(--secondary-background-color);margin-top:10px}
-        .entry-head{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap}
-        .small{font-size:12px;color:var(--secondary-text-color)}
-        .photo-add{display:inline-block;margin-top:8px;cursor:pointer;color:var(--primary-color);width:auto}
-        .photo-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
-        .photo-thumb{position:relative;width:88px;height:88px;border-radius:10px;overflow:hidden;border:1px solid var(--divider-color)}
-        .photo-thumb img{width:100%;height:100%;object-fit:cover}
-        .photo-remove{position:absolute;top:2px;right:2px;width:20px;height:20px;padding:0;border-radius:999px;line-height:1;background:rgba(0,0,0,0.6);color:#fff}
-        .error{display:flex;justify-content:space-between;align-items:center;color:#fff;background:var(--error-color,#c62828);border-radius:12px;padding:10px 14px;font-size:13px}
-        .error button{background:transparent;color:#fff;padding:2px 8px;width:auto}
-        .filter-row{display:flex;gap:8px;align-items:center}
-        .empty{padding:24px;text-align:center;color:var(--secondary-text-color)}
-        .member-row{display:flex;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--divider-color)}
-        .member-row select{width:140px}
-        .toggle-link{background:transparent;color:var(--primary-color);width:auto;padding:0;text-decoration:underline}
+        :host { display:block; font-family:var(--primary-font-family,Arial); padding:16px; color:var(--primary-text-color); }
+        .wrap { max-width:1200px; margin:0 auto; display:grid; gap:16px; }
+        .grid { display:grid; grid-template-columns:1.4fr .9fr; gap:16px; }
+        @media (max-width:800px) { .grid { grid-template-columns:1fr; } }
+        .card { background:var(--card-background-color); border:1px solid var(--divider-color); border-radius:16px; padding:16px; }
+        .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+        .pill { padding:6px 10px; border-radius:999px; background:var(--secondary-background-color); font-size:12px; }
+        textarea,input,select,button { font:inherit; }
+        textarea,input,select { width:100%; box-sizing:border-box; padding:12px; border-radius:12px; border:1px solid var(--divider-color); background:var(--input-fill-color,transparent); color:inherit; }
+        textarea { min-height:110px; resize:vertical; }
+        button { padding:10px 14px; border-radius:12px; border:0; background:var(--primary-color); color:var(--text-primary-color); cursor:pointer; }
+        button:disabled { opacity:0.5; cursor:not-allowed; }
+        button.ghost { background:transparent; color:var(--error-color,#c62828); border:1px solid var(--divider-color); width:auto; }
+        .entry { padding:14px; border:1px solid var(--divider-color); border-radius:14px; background:var(--secondary-background-color); margin-top:10px; }
+        .entry-head { display:flex; gap:8px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
+        .small { font-size:12px; color:var(--secondary-text-color); }
+        .photo-add { display:inline-block; margin-top:8px; cursor:pointer; color:var(--primary-color); width:auto; }
+        .photo-row { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+        .photo-thumb { position:relative; width:88px; height:88px; border-radius:10px; overflow:hidden; border:1px solid var(--divider-color); }
+        .photo-thumb img { width:100%; height:100%; object-fit:cover; }
+        .photo-remove { position:absolute; top:2px; right:2px; width:20px; height:20px; padding:0; border-radius:999px; line-height:1; background:rgba(0,0,0,0.6); color:#fff; }
+        .error { display:flex; justify-content:space-between; align-items:center; color:#fff; background:var(--error-color,#c62828); border-radius:12px; padding:10px 14px; font-size:13px; }
+        .error button { background:transparent; color:#fff; padding:2px 8px; width:auto; }
+        .filter-row { display:flex; gap:8px; align-items:center; }
+        .empty { padding:24px; text-align:center; color:var(--secondary-text-color); }
+        .member-row { display:flex; gap:8px; align-items:center; padding:8px 0; border-bottom:1px solid var(--divider-color); }
+        .member-row select { width:140px; }
+        .toggle-link { background:transparent; color:var(--primary-color); width:auto; padding:0; text-decoration:underline; }
       </style>
       <div class="wrap">
         <div class="row">
           <span class="pill">Signed in as ${this._escape(this._currentUserName)}</span>
           <span class="pill">${this._state.loading ? 'Syncing…' : 'Up to date'}</span>
-          <button class="toggle-link" id="toggle-members">${this._state.showMembers ? 'Hide' : 'Manage'} members &amp; retention</button>
+          <button class="toggle-link" id="toggle-members">${this._state.showMembers ? 'Hide' : 'Manage members &amp; retention'}</button>
         </div>
         ${this._state.error ? `<div class="error"><span>${this._escape(this._state.error)}</span><button id="dismiss-error" aria-label="Dismiss">&times;</button></div>` : ''}
         <div class="grid">
           <div class="card">
             <h2>Today</h2>
             <select id="visibility-select">
-              <option value="household">Household (visible to all members)</option>
-              <option value="private">Private (only me)</option>
-              <option value="shared">Shared (selected people)</option>
+              <option value="household">Household — visible to all members</option>
+              <option value="private">Private — only me</option>
+              <option value="shared">Shared — selected people</option>
             </select>
             <label style="display:block;margin-top:12px">Entry</label>
-            <textarea id="draft-input" placeholder="Write one line... (Ctrl/Cmd+Enter to save)"></textarea>
+            <textarea id="draft-input" placeholder="Write one line… (Ctrl/Cmd+Enter to save)"></textarea>
             <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
               <button id="save-btn" ${this._state.loading ? 'disabled' : ''}>Save</button>
             </div>
-
             <div class="filter-row" style="margin-top:20px">
               <label class="small">Filter by author</label>
               <select id="filter-select">
@@ -487,19 +489,19 @@ class OneLineHaDayPanel extends HTMLElement {
                 ${authors.map((a) => `<option value="${a}" ${this._state.filterUser === a ? 'selected' : ''}>${a === this._currentUserId ? 'Me' : this._escape(a)}</option>`).join('')}
               </select>
             </div>
-
             ${this._state.entries.length
               ? this._state.entries.map((e) => this._renderEntry(e)).join('')
               : '<div class="empty">No entries yet. Write the first line for today.</div>'}
           </div>
-          ${this._state.showMembers
-            ? this._renderMembersPanel()
-            : `<div class="card">
-                <h3>Permissions</h3>
-                <div class="small">Household entries are visible to every journal member. Private entries are visible only to their author. Shared entries are visible only to the people explicitly granted access.</div>
-              </div>`}
+          ${this._state.showMembers ? this._renderMembersPanel() : `
+            <div class="card">
+              <h3>Permissions</h3>
+              <div class="small">Household entries are visible to every journal member. Private entries are visible only to their author. Shared entries are visible only to the people explicitly granted access.</div>
+            </div>
+          `}
         </div>
-      </div>`;
+      </div>
+    `;
     this._attachHandlers();
   }
 }
