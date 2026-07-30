@@ -69,16 +69,12 @@ class OneLineHaDayPanel extends HTMLElement {
     return this._state.members[this._currentUserId] === 'owner';
   }
 
-  /**
-   * Return ISO string for today (YYYY-MM-DD).
-   */
+  /** Return ISO string for today (YYYY-MM-DD). */
   _getTodayIso() {
     return new Date().toISOString().slice(0, 10);
   }
 
-  /**
-   * Return ISO string for this day one year ago.
-   */
+  /** Return ISO string for this day one year ago. */
   _getLastYearIso() {
     const now = new Date();
     const lastYear = new Date(now);
@@ -86,9 +82,7 @@ class OneLineHaDayPanel extends HTMLElement {
     return lastYear.toISOString().slice(0, 10);
   }
 
-  /**
-   * Find the current user's entry for today, if any.
-   */
+  /** Find the current user's entry for today, if any. */
   _getTodaysEntryForCurrentUser() {
     const today = this._getTodayIso();
     const mine = this._state.entries.filter(
@@ -97,9 +91,7 @@ class OneLineHaDayPanel extends HTMLElement {
     return mine[0] || null;
   }
 
-  /**
-   * Find the current user's entry for the same day last year, if any.
-   */
+  /** Find the current user's entry for the same day last year, if any. */
   _getLastYearEntryForCurrentUser() {
     const lastYearIso = this._getLastYearIso();
     const mine = this._state.entries.filter(
@@ -112,9 +104,6 @@ class OneLineHaDayPanel extends HTMLElement {
    * Route an API call through Home Assistant's authenticated frontend
    * connection. hass.callApi() manages the session, access-token refresh,
    * and works transparently for local, Nabu Casa, and reverse-proxy setups.
-   *
-   * @param {string} path  - API sub-path, e.g. '/journals' or '/entries?journal_id=…'
-   * @param {object} options - { method, body } where body is a plain object or FormData
    */
   async _request(path, options = {}) {
     if (!this._hass?.callApi) {
@@ -302,8 +291,6 @@ class OneLineHaDayPanel extends HTMLElement {
     if (!this._state.journalId) return;
 
     await this._withLoading(async () => {
-      // Export returns JSON; use the same authenticated API path as every
-      // other panel action instead of an unauthenticated browser fetch.
       const data = await this._request(`/journals/${this._state.journalId}/export`);
       const blob = new Blob([JSON.stringify(data, null, 2)], {
         type: 'application/json',
@@ -381,11 +368,21 @@ class OneLineHaDayPanel extends HTMLElement {
     const dismissError = root.getElementById('dismiss-error');
     if (dismissError) dismissError.addEventListener('click', () => { this._state.error = null; this.render(); });
 
-    const toggleMembers = root.getElementById('toggle-members');
-    if (toggleMembers) toggleMembers.addEventListener('click', () => {
-      this._state.showMembers = !this._state.showMembers;
-      this.render();
-    });
+    const settingsBtn = root.getElementById('open-settings');
+    if (settingsBtn) {
+      settingsBtn.addEventListener('click', () => {
+        this._state.showMembers = true;
+        this.render();
+      });
+    }
+
+    const settingsClose = root.getElementById('close-settings');
+    if (settingsClose) {
+      settingsClose.addEventListener('click', () => {
+        this._state.showMembers = false;
+        this.render();
+      });
+    }
 
     const newMemberIdInput = root.getElementById('new-member-id');
     if (newMemberIdInput) {
@@ -476,8 +473,12 @@ class OneLineHaDayPanel extends HTMLElement {
 
   _renderMembersPanel() {
     const members = Object.entries(this._state.members);
-    return `<div class="card">
-      <h3>Members</h3>
+    return `<div class="settings-card">
+      <div class="settings-header">
+        <h3>Journal settings</h3>
+        <button id="close-settings" class="ghost">Close</button>
+      </div>
+      <h4>Members</h4>
       ${members.map(([uid, role]) => this._renderMemberRow(uid, role)).join('')}
       ${this._isOwner ? `
         <div class="row" style="margin-top:12px">
@@ -490,16 +491,15 @@ class OneLineHaDayPanel extends HTMLElement {
           <button id="add-member-btn">Add</button>
         </div>
         <p class="small" style="margin-top:8px">Find a user's ID under Settings &rarr; People &rarr; select person.</p>
-        <h3 style="margin-top:20px">Retention</h3>
+        <h4 style="margin-top:20px">Retention</h4>
         <div class="row">
           <input id="retention-input" type="number" min="1" placeholder="Days (empty = keep forever)" style="flex:1">
           <button id="save-retention-btn">Save</button>
         </div>
         <p class="small" style="margin-top:8px">Entries older than this are automatically purged, including their photos.</p>
-        <p class="small">Only the journal owner can manage members and retention.</p>
-        <h3 style="margin-top:20px">Export</h3>
+        <h4 style="margin-top:20px">Export</h4>
         <button id="export-btn">Download my visible entries as JSON</button>
-      ` : ''}
+      ` : '<p class="small">Only the journal owner can manage members and retention.</p>'}
     </div>`;
   }
 
@@ -513,6 +513,12 @@ class OneLineHaDayPanel extends HTMLElement {
     if (!this.shadowRoot) return;
     const authors = this._authorOptions;
     const lastYearEntry = this._getLastYearEntryForCurrentUser();
+
+    // Simple month label and static grid (visual mockup for now).
+    const now = new Date();
+    const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    const monthLabel = `${monthNames[now.getMonth()]} ${now.getFullYear()}`;
+
     this.shadowRoot.innerHTML = `
       <style>
         :host { display:block; font-family:var(--primary-font-family,Arial); padding:16px; color:var(--primary-text-color); }
@@ -540,20 +546,38 @@ class OneLineHaDayPanel extends HTMLElement {
         .error button { background:transparent; color:#fff; padding:2px 8px; width:auto; }
         .filter-row { display:flex; gap:8px; align-items:center; }
         .empty { padding:24px; text-align:center; color:var(--secondary-text-color); }
-        .member-row { display:flex; gap:8px; align-items:center; padding:8px 0; border-bottom:1px solid var(--divider-color); }
-        .member-row select { width:140px; }
         .toggle-link { background:transparent; color:var(--primary-color); width:auto; padding:0; text-decoration:underline; }
         .attach-row { margin-top:12px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
         .photo-drop { position:relative; border-radius:12px; border:1px dashed var(--divider-color); padding:8px 10px; font-size:12px; color:var(--secondary-text-color); cursor:pointer; }
         .photo-drop input[type="file"] { position:absolute; inset:0; opacity:0; cursor:pointer; }
         .thumb-preview { width:48px; height:48px; border-radius:10px; border:1px solid var(--divider-color); background:var(--secondary-background-color); display:flex; align-items:center; justify-content:center; font-size:10px; color:var(--secondary-text-color); }
         .previous-year { margin-top:16px; border-top:1px solid var(--divider-color); padding-top:10px; }
+        /* Calendar styles */
+        .calendar-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+        .calendar-nav { display:flex; gap:8px; align-items:center; }
+        .calendar-nav button { background:transparent; border:1px solid var(--divider-color); border-radius:999px; color:var(--secondary-text-color); padding:4px 10px; cursor:pointer; font-size:12px; }
+        .month-label { font-weight:500; }
+        .weekday-row { display:grid; grid-template-columns:repeat(7,1fr); gap:4px; margin-top:4px; }
+        .weekday { text-align:center; font-size:11px; color:var(--secondary-text-color); }
+        .calendar-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:4px; margin-top:8px; }
+        .day-cell { border-radius:10px; border:1px solid var(--divider-color); background:var(--secondary-background-color); padding:6px 6px 10px; min-height:60px; display:flex; flex-direction:column; justify-content:space-between; cursor:pointer; }
+        .day-cell.empty { opacity:0.5; }
+        .day-number { font-size:12px; font-weight:500; }
+        .dots-row { display:flex; gap:4px; margin-top:4px; }
+        .dot { width:8px; height:8px; border-radius:999px; background:var(--divider-color); }
+        .legend { margin-top:12px; display:flex; flex-wrap:wrap; gap:8px; font-size:11px; color:var(--secondary-text-color); }
+        .legend-item { display:inline-flex; align-items:center; gap:4px; }
+        .legend-dot { width:10px; height:10px; border-radius:999px; }
+        /* Settings overlay */
+        .settings-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.5); display:flex; align-items:center; justify-content:center; z-index:1000; }
+        .settings-card { max-width:480px; width:90%; background:var(--card-background-color); border:1px solid var(--divider-color); border-radius:16px; padding:16px; }
+        .settings-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
       </style>
       <div class="wrap">
         <div class="row">
           <span class="pill">Signed in as ${this._escape(this._currentUserName)}</span>
           <span class="pill">${this._state.loading ? 'Syncing…' : 'Up to date'}</span>
-          <button class="toggle-link" id="toggle-members">${this._state.showMembers ? 'Hide' : 'Manage members &amp; retention'}</button>
+          <button id="open-settings" class="toggle-link">Settings</button>
         </div>
         ${this._state.error ? `<div class="error"><span>${this._escape(this._state.error)}</span><button id="dismiss-error" aria-label="Dismiss">&times;</button></div>` : ''}
         <div class="grid">
@@ -582,14 +606,51 @@ class OneLineHaDayPanel extends HTMLElement {
                 <p class="small" style="margin-top:4px;">"${this._escape(lastYearEntry.body)}"</p>
               </div>
             ` : ''}
-          </div>
-          ${this._state.showMembers ? this._renderMembersPanel() : `
-            <div class="card">
-              <h3>Permissions</h3>
-              <div class="small">Household entries are visible to every journal member. Private entries are visible only to their author. Shared entries are visible only to the people explicitly granted access.</div>
+            <div class="filter-row" style="margin-top:20px">
+              <label class="small">Filter by author</label>
+              <select id="filter-select">
+                <option value="all" ${this._state.filterUser === 'all' ? 'selected' : ''}>Everyone</option>
+                ${authors.map((a) => `<option value="${a}" ${this._state.filterUser === a ? 'selected' : ''}>${a === this._currentUserId ? 'Me' : this._escape(a)}</option>`).join('')}
+              </select>
             </div>
-          `}
+            ${this._state.entries.length
+              ? this._state.entries.map((e) => this._renderEntry(e)).join('')
+              : '<div class="empty">No entries yet. Write the first line for today.</div>'}
+          </div>
+          <div class="card">
+            <div class="calendar-header">
+              <div class="month-label">${monthLabel}</div>
+              <div class="calendar-nav">
+                <button>&lt; Prev</button>
+                <button>Next &gt;</button>
+              </div>
+            </div>
+            <div class="weekday-row">
+              <div class="weekday">Mon</div>
+              <div class="weekday">Tue</div>
+              <div class="weekday">Wed</div>
+              <div class="weekday">Thu</div>
+              <div class="weekday">Fri</div>
+              <div class="weekday">Sat</div>
+              <div class="weekday">Sun</div>
+            </div>
+            <div class="calendar-grid">
+              ${Array.from({ length: 42 }).map((_, idx) => {
+                const dayNumber = idx + 1;
+                const inMonth = dayNumber <= 31;
+                return `<div class="day-cell ${inMonth ? '' : 'empty'}">
+                  <span class="day-number">${inMonth ? dayNumber : ''}</span>
+                  ${inMonth ? '<div class="dots-row"><span class="dot"></span></div>' : ''}
+                </div>`;
+              }).join('')}
+            </div>
+            <div class="legend">
+              <span class="legend-item"><span class="legend-dot" style="background: var(--primary-color);"></span> Day has a line</span>
+              <span class="legend-item"><span class="legend-dot" style="background: var(--divider-color);"></span> Empty day</span>
+            </div>
+          </div>
         </div>
+        ${this._state.showMembers ? `<div class="settings-overlay">${this._renderMembersPanel()}</div>` : ''}
       </div>
     `;
     this._attachHandlers();
