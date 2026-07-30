@@ -70,6 +70,45 @@ class OneLineHaDayPanel extends HTMLElement {
   }
 
   /**
+   * Return ISO string for today (YYYY-MM-DD).
+   */
+  _getTodayIso() {
+    return new Date().toISOString().slice(0, 10);
+  }
+
+  /**
+   * Return ISO string for this day one year ago.
+   */
+  _getLastYearIso() {
+    const now = new Date();
+    const lastYear = new Date(now);
+    lastYear.setFullYear(now.getFullYear() - 1);
+    return lastYear.toISOString().slice(0, 10);
+  }
+
+  /**
+   * Find the current user's entry for today, if any.
+   */
+  _getTodaysEntryForCurrentUser() {
+    const today = this._getTodayIso();
+    const mine = this._state.entries.filter(
+      (e) => e.entry_date === today && e.author_ha_user_id === this._currentUserId
+    );
+    return mine[0] || null;
+  }
+
+  /**
+   * Find the current user's entry for the same day last year, if any.
+   */
+  _getLastYearEntryForCurrentUser() {
+    const lastYearIso = this._getLastYearIso();
+    const mine = this._state.entries.filter(
+      (e) => e.entry_date === lastYearIso && e.author_ha_user_id === this._currentUserId
+    );
+    return mine[0] || null;
+  }
+
+  /**
    * Route an API call through Home Assistant's authenticated frontend
    * connection. hass.callApi() manages the session, access-token refresh,
    * and works transparently for local, Nabu Casa, and reverse-proxy setups.
@@ -141,7 +180,7 @@ class OneLineHaDayPanel extends HTMLElement {
         method: 'POST',
         body: JSON.stringify({
           journal_id: this._state.journalId,
-          entry_date: new Date().toISOString().slice(0, 10),
+          entry_date: this._getTodayIso(),
           body: this._state.draft.trim(),
           visibility: this._state.visibility,
         }),
@@ -156,6 +195,40 @@ class OneLineHaDayPanel extends HTMLElement {
     form.append('file', file);
     await this._withLoading(async () => {
       await this._request(`/entries/${entryId}/photos`, {
+        method: 'POST',
+        body: form,
+      });
+      await this._loadEntries();
+    });
+  }
+
+  /**
+   * Attach a photo while writing today's line.
+   * If no entry exists yet for today, create one from the current draft
+   * and visibility, then upload the photo to that new entry.
+   */
+  async _uploadPhotoForToday(file) {
+    await this._withLoading(async () => {
+      let entry = this._getTodaysEntryForCurrentUser();
+      if (!entry) {
+        if (!this._state.draft.trim()) {
+          throw new Error('Write a line for today before attaching a photo.');
+        }
+        entry = await this._request('/entries', {
+          method: 'POST',
+          body: JSON.stringify({
+            journal_id: this._state.journalId,
+            entry_date: this._getTodayIso(),
+            body: this._state.draft.trim(),
+            visibility: this._state.visibility,
+          }),
+        });
+        this._state.draft = '';
+      }
+
+      const form = new FormData();
+      form.append('file', file);
+      await this._request(`/entries/${entry.id}/photos`, {
         method: 'POST',
         body: form,
       });
@@ -274,6 +347,14 @@ class OneLineHaDayPanel extends HTMLElement {
 
     const saveBtn = root.getElementById('save-btn');
     if (saveBtn) saveBtn.addEventListener('click', () => this._saveEntry());
+
+    const todayPhotoInput = root.getElementById('today-photo-input');
+    if (todayPhotoInput) {
+      todayPhotoInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file) this._uploadPhotoForToday(file);
+      });
+    }
 
     root.querySelectorAll('[data-photo-input]').forEach((input) => {
       input.addEventListener('change', (e) => {
@@ -431,6 +512,7 @@ class OneLineHaDayPanel extends HTMLElement {
   render() {
     if (!this.shadowRoot) return;
     const authors = this._authorOptions;
+    const lastYearEntry = this._getLastYearEntryForCurrentUser();
     this.shadowRoot.innerHTML = `
       <style>
         :host { display:block; font-family:var(--primary-font-family,Arial); padding:16px; color:var(--primary-text-color); }
@@ -461,6 +543,11 @@ class OneLineHaDayPanel extends HTMLElement {
         .member-row { display:flex; gap:8px; align-items:center; padding:8px 0; border-bottom:1px solid var(--divider-color); }
         .member-row select { width:140px; }
         .toggle-link { background:transparent; color:var(--primary-color); width:auto; padding:0; text-decoration:underline; }
+        .attach-row { margin-top:12px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+        .photo-drop { position:relative; border-radius:12px; border:1px dashed var(--divider-color); padding:8px 10px; font-size:12px; color:var(--secondary-text-color); cursor:pointer; }
+        .photo-drop input[type="file"] { position:absolute; inset:0; opacity:0; cursor:pointer; }
+        .thumb-preview { width:48px; height:48px; border-radius:10px; border:1px solid var(--divider-color); background:var(--secondary-background-color); display:flex; align-items:center; justify-content:center; font-size:10px; color:var(--secondary-text-color); }
+        .previous-year { margin-top:16px; border-top:1px solid var(--divider-color); padding-top:10px; }
       </style>
       <div class="wrap">
         <div class="row">
@@ -479,19 +566,22 @@ class OneLineHaDayPanel extends HTMLElement {
             </select>
             <label style="display:block;margin-top:12px">Entry</label>
             <textarea id="draft-input" placeholder="Write one line… (Ctrl/Cmd+Enter to save)"></textarea>
+            <div class="attach-row">
+              <div class="photo-drop">
+                Attach photo (optional)
+                <input id="today-photo-input" type="file" accept="image/jpeg,image/png,image/webp,image/heic">
+              </div>
+              <div class="thumb-preview">Preview</div>
+            </div>
             <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
               <button id="save-btn" ${this._state.loading ? 'disabled' : ''}>Save</button>
             </div>
-            <div class="filter-row" style="margin-top:20px">
-              <label class="small">Filter by author</label>
-              <select id="filter-select">
-                <option value="all" ${this._state.filterUser === 'all' ? 'selected' : ''}>Everyone</option>
-                ${authors.map((a) => `<option value="${a}" ${this._state.filterUser === a ? 'selected' : ''}>${a === this._currentUserId ? 'Me' : this._escape(a)}</option>`).join('')}
-              </select>
-            </div>
-            ${this._state.entries.length
-              ? this._state.entries.map((e) => this._renderEntry(e)).join('')
-              : '<div class="empty">No entries yet. Write the first line for today.</div>'}
+            ${lastYearEntry ? `
+              <div class="previous-year">
+                <div class="small">Last year on this day (${lastYearEntry.entry_date})</div>
+                <p class="small" style="margin-top:4px;">"${this._escape(lastYearEntry.body)}"</p>
+              </div>
+            ` : ''}
           </div>
           ${this._state.showMembers ? this._renderMembersPanel() : `
             <div class="card">
