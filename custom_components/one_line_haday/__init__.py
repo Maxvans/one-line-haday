@@ -63,8 +63,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             webcomponent_name="one-line-haday-panel",
             sidebar_title=PANEL_TITLE,
             sidebar_icon=PANEL_ICON,
-            # ?v=6 busts the browser/HA JS cache after this authentication fix.
-            module_url=f"/{DOMAIN}_static/{PANEL_JS_FILENAME}?v=6",
+            # ?v=7 busts the browser/HA JS cache after the latest calendar update.
+            module_url=f"/{DOMAIN}_static/{PANEL_JS_FILENAME}?v=7",
             embed_iframe=False,
             require_admin=False,
         )
