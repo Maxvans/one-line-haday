@@ -27,6 +27,7 @@ class OneLineHaDayPanel extends HTMLElement {
       newMemberId: '',
       newMemberRole: 'viewer',
       retentionDays: '',
+      selectedDate: null,
     };
   }
 
@@ -101,6 +102,51 @@ class OneLineHaDayPanel extends HTMLElement {
   }
 
   /**
+   * Compute consecutive-day streak up to today for the current user.
+   * A day counts if there is at least one entry with that exact date.
+   */
+  _computeStreakDays() {
+    if (!this._currentUserId) return 0;
+    const dates = new Set(
+      this._state.entries
+        .filter((e) => e.author_ha_user_id === this._currentUserId)
+        .map((e) => e.entry_date)
+    );
+    let streak = 0;
+    let cursor = new Date(this._getTodayIso());
+    // Walk backwards one day at a time until we hit a gap.
+    while (dates.has(cursor.toISOString().slice(0, 10))) {
+      streak += 1;
+      cursor.setDate(cursor.getDate() - 1);
+    }
+    return streak;
+  }
+
+  /**
+   * Build a 7x6 month grid for the given year and month.
+   * Each cell is either null (outside current month) or
+   * { iso: YYYY-MM-DD, day: 1-31 }.
+   */
+  _buildMonthGrid(year, month) {
+    const firstOfMonth = new Date(year, month, 1);
+    // JS getDay(): 0=Sun..6=Sat, convert to 0=Mon..6=Sun.
+    const firstWeekday = (firstOfMonth.getDay() + 6) % 7;
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const cells = [];
+
+    for (let i = 0; i < 42; i++) {
+      const dayNumber = i - firstWeekday + 1;
+      if (dayNumber < 1 || dayNumber > daysInMonth) {
+        cells.push(null);
+      } else {
+        const d = new Date(year, month, dayNumber);
+        cells.push({ iso: d.toISOString().slice(0, 10), day: dayNumber });
+      }
+    }
+    return cells;
+  }
+
+  /**
    * Route an API call through Home Assistant's authenticated frontend
    * connection. hass.callApi() manages the session, access-token refresh,
    * and works transparently for local, Nabu Casa, and reverse-proxy setups.
@@ -143,6 +189,7 @@ class OneLineHaDayPanel extends HTMLElement {
       if (!journal) throw new Error('No journal available');
       this._state.journalId = journal.id;
       this._state.retentionDays = journal.retention_days || '';
+      this._state.selectedDate = this._getTodayIso();
       await this._loadMembers();
       await this._loadEntries();
     });
@@ -164,12 +211,13 @@ class OneLineHaDayPanel extends HTMLElement {
 
   async _saveEntry() {
     if (!this._state.draft.trim() || !this._state.journalId) return;
+    const targetDate = this._state.selectedDate || this._getTodayIso();
     await this._withLoading(async () => {
       await this._request('/entries', {
         method: 'POST',
         body: JSON.stringify({
           journal_id: this._state.journalId,
-          entry_date: this._getTodayIso(),
+          entry_date: targetDate,
           body: this._state.draft.trim(),
           visibility: this._state.visibility,
         }),
@@ -424,6 +472,16 @@ class OneLineHaDayPanel extends HTMLElement {
 
     const exportBtn = root.getElementById('export-btn');
     if (exportBtn) exportBtn.addEventListener('click', () => this._exportJournal());
+
+    // Calendar selection: clicking a day sets selectedDate and filters the list.
+    root.querySelectorAll('[data-date]').forEach((cell) => {
+      const date = cell.getAttribute('data-date');
+      if (!date) return;
+      cell.addEventListener('click', () => {
+        this._state.selectedDate = date;
+        this.render();
+      });
+    });
   }
 
   get _authorOptions() {
@@ -512,12 +570,45 @@ class OneLineHaDayPanel extends HTMLElement {
   render() {
     if (!this.shadowRoot) return;
     const authors = this._authorOptions;
+    const todayIso = this._getTodayIso();
+    const selectedDate = this._state.selectedDate || todayIso;
     const lastYearEntry = this._getLastYearEntryForCurrentUser();
+    const streakDays = this._computeStreakDays();
 
-    // Simple month label and static grid (visual mockup for now).
-    const now = new Date();
+    // Month label and calendar grid for the current month.
+    const baseDate = new Date(todayIso);
     const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-    const monthLabel = `${monthNames[now.getMonth()]} ${now.getFullYear()}`;
+    const monthLabel = `${monthNames[baseDate.getMonth()]} ${baseDate.getFullYear()}`;
+    const gridCells = this._buildMonthGrid(baseDate.getFullYear(), baseDate.getMonth());
+
+    // Entries for the selected calendar date across years.
+    const entriesForSelectedDay = this._state.entries.filter((e) => {
+      if (!e.entry_date) return false;
+      const parts = e.entry_date.split('-');
+      const selParts = selectedDate.split('-');
+      if (parts.length !== 3 || selParts.length !== 3) return false;
+      const [, month, day] = parts;
+      const [, selMonth, selDay] = selParts;
+      if (month !== selMonth || day !== selDay) return false;
+      if (this._state.filterUser !== 'all' && e.author_ha_user_id !== this._state.filterUser) return false;
+      return true;
+    });
+
+    const entriesListHtml = entriesForSelectedDay.length
+      ? entriesForSelectedDay
+          .slice()
+          .sort((a, b) => a.entry_date.localeCompare(b.entry_date))
+          .map((e) => this._renderEntry(e))
+          .join('')
+      : '<div class="empty">No entries yet for this date. Write the first line above.</div>';
+
+    const hasEntryForDate = (iso) => {
+      return this._state.entries.some((e) => {
+        if (!e.entry_date) return false;
+        if (this._state.filterUser !== 'all' && e.author_ha_user_id !== this._state.filterUser) return false;
+        return e.entry_date === iso;
+      });
+    };
 
     this.shadowRoot.innerHTML = `
       <style>
@@ -561,10 +652,13 @@ class OneLineHaDayPanel extends HTMLElement {
         .weekday { text-align:center; font-size:11px; color:var(--secondary-text-color); }
         .calendar-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:4px; margin-top:8px; }
         .day-cell { border-radius:10px; border:1px solid var(--divider-color); background:var(--secondary-background-color); padding:6px 6px 10px; min-height:60px; display:flex; flex-direction:column; justify-content:space-between; cursor:pointer; }
-        .day-cell.empty { opacity:0.5; }
+        .day-cell.empty { opacity:0.3; cursor:default; }
+        .day-cell.selected { border-color:var(--primary-color); box-shadow:0 0 0 1px var(--primary-color); }
         .day-number { font-size:12px; font-weight:500; }
+        .day-number.today { border-radius:999px; border:1px solid var(--primary-color); padding:0 4px; }
         .dots-row { display:flex; gap:4px; margin-top:4px; }
         .dot { width:8px; height:8px; border-radius:999px; background:var(--divider-color); }
+        .dot.has-entry { background:var(--primary-color); }
         .legend { margin-top:12px; display:flex; flex-wrap:wrap; gap:8px; font-size:11px; color:var(--secondary-text-color); }
         .legend-item { display:inline-flex; align-items:center; gap:4px; }
         .legend-dot { width:10px; height:10px; border-radius:999px; }
@@ -576,6 +670,7 @@ class OneLineHaDayPanel extends HTMLElement {
       <div class="wrap">
         <div class="row">
           <span class="pill">Signed in as ${this._escape(this._currentUserName)}</span>
+          <span class="pill">Streak: ${streakDays} day${streakDays === 1 ? '' : 's'}</span>
           <span class="pill">${this._state.loading ? 'Syncing…' : 'Up to date'}</span>
           <button id="open-settings" class="toggle-link">Settings</button>
         </div>
@@ -607,22 +702,23 @@ class OneLineHaDayPanel extends HTMLElement {
               </div>
             ` : ''}
             <div class="filter-row" style="margin-top:20px">
+              <label class="small">Showing entries for ${selectedDate}</label>
+            </div>
+            <div class="filter-row" style="margin-top:8px">
               <label class="small">Filter by author</label>
               <select id="filter-select">
                 <option value="all" ${this._state.filterUser === 'all' ? 'selected' : ''}>Everyone</option>
                 ${authors.map((a) => `<option value="${a}" ${this._state.filterUser === a ? 'selected' : ''}>${a === this._currentUserId ? 'Me' : this._escape(a)}</option>`).join('')}
               </select>
             </div>
-            ${this._state.entries.length
-              ? this._state.entries.map((e) => this._renderEntry(e)).join('')
-              : '<div class="empty">No entries yet. Write the first line for today.</div>'}
+            ${entriesListHtml}
           </div>
           <div class="card">
             <div class="calendar-header">
               <div class="month-label">${monthLabel}</div>
               <div class="calendar-nav">
-                <button>&lt; Prev</button>
-                <button>Next &gt;</button>
+                <button disabled>&lt; Prev</button>
+                <button disabled>Next &gt;</button>
               </div>
             </div>
             <div class="weekday-row">
@@ -635,12 +731,18 @@ class OneLineHaDayPanel extends HTMLElement {
               <div class="weekday">Sun</div>
             </div>
             <div class="calendar-grid">
-              ${Array.from({ length: 42 }).map((_, idx) => {
-                const dayNumber = idx + 1;
-                const inMonth = dayNumber <= 31;
-                return `<div class="day-cell ${inMonth ? '' : 'empty'}">
-                  <span class="day-number">${inMonth ? dayNumber : ''}</span>
-                  ${inMonth ? '<div class="dots-row"><span class="dot"></span></div>' : ''}
+              ${gridCells.map((cell) => {
+                if (!cell) {
+                  return '<div class="day-cell empty"><span class="day-number"></span></div>';
+                }
+                const hasEntry = hasEntryForDate(cell.iso);
+                const selectedClass = cell.iso === selectedDate ? ' selected' : '';
+                const todayClass = cell.iso === todayIso ? ' today' : '';
+                return `<div class="day-cell${selectedClass}" data-date="${cell.iso}">
+                  <span class="day-number${todayClass}">${cell.day}</span>
+                  <div class="dots-row">
+                    <span class="dot${hasEntry ? ' has-entry' : ''}"></span>
+                  </div>
                 </div>`;
               }).join('')}
             </div>
