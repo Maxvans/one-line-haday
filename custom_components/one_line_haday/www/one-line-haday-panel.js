@@ -28,6 +28,8 @@ class OneLineHaDayPanel extends HTMLElement {
       newMemberRole: 'viewer',
       retentionDays: '',
       selectedDate: null,
+      viewYear: null,
+      viewMonth: null, // 0–11
     };
   }
 
@@ -70,17 +72,23 @@ class OneLineHaDayPanel extends HTMLElement {
     return this._state.members[this._currentUserId] === 'owner';
   }
 
-  /** Return ISO string for today (YYYY-MM-DD). */
+  /** Return ISO string for today (YYYY-MM-DD) in local time. */
   _getTodayIso() {
-    return new Date().toISOString().slice(0, 10);
+    const d = new Date();
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
   }
 
-  /** Return ISO string for this day one year ago. */
+  /** Return ISO string for this day one year ago (YYYY-MM-DD) in local time. */
   _getLastYearIso() {
-    const now = new Date();
-    const lastYear = new Date(now);
-    lastYear.setFullYear(now.getFullYear() - 1);
-    return lastYear.toISOString().slice(0, 10);
+    const d = new Date();
+    d.setFullYear(d.getFullYear() - 1);
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
   }
 
   /** Find the current user's entry for today, if any. */
@@ -115,7 +123,12 @@ class OneLineHaDayPanel extends HTMLElement {
     let streak = 0;
     let cursor = new Date(this._getTodayIso());
     // Walk backwards one day at a time until we hit a gap.
-    while (dates.has(cursor.toISOString().slice(0, 10))) {
+    // Use local date math, but format as ISO YYYY-MM-DD.
+    while (dates.has(
+      `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(
+        cursor.getDate()
+      ).padStart(2, '0')}`
+    )) {
       streak += 1;
       cursor.setDate(cursor.getDate() - 1);
     }
@@ -139,8 +152,11 @@ class OneLineHaDayPanel extends HTMLElement {
       if (dayNumber < 1 || dayNumber > daysInMonth) {
         cells.push(null);
       } else {
-        const d = new Date(year, month, dayNumber);
-        cells.push({ iso: d.toISOString().slice(0, 10), day: dayNumber });
+        const iso = `${year}-${String(month + 1).padStart(2, '0')}-${String(dayNumber).padStart(
+          2,
+          '0'
+        )}`;
+        cells.push({ iso, day: dayNumber });
       }
     }
     return cells;
@@ -189,7 +205,13 @@ class OneLineHaDayPanel extends HTMLElement {
       if (!journal) throw new Error('No journal available');
       this._state.journalId = journal.id;
       this._state.retentionDays = journal.retention_days || '';
-      this._state.selectedDate = this._getTodayIso();
+
+      const todayIso = this._getTodayIso();
+      const today = new Date(todayIso);
+      this._state.selectedDate = todayIso;
+      this._state.viewYear = today.getFullYear();
+      this._state.viewMonth = today.getMonth();
+
       await this._loadMembers();
       await this._loadEntries();
     });
@@ -482,6 +504,31 @@ class OneLineHaDayPanel extends HTMLElement {
         this.render();
       });
     });
+
+    const prevBtn = root.getElementById('prev-month');
+    const nextBtn = root.getElementById('next-month');
+    if (prevBtn) {
+      prevBtn.addEventListener('click', () => {
+        const year = this._state.viewYear;
+        const month = this._state.viewMonth;
+        const d = new Date(year, month, 1);
+        d.setMonth(d.getMonth() - 1);
+        this._state.viewYear = d.getFullYear();
+        this._state.viewMonth = d.getMonth();
+        this.render();
+      });
+    }
+    if (nextBtn) {
+      nextBtn.addEventListener('click', () => {
+        const year = this._state.viewYear;
+        const month = this._state.viewMonth;
+        const d = new Date(year, month, 1);
+        d.setMonth(d.getMonth() + 1);
+        this._state.viewYear = d.getFullYear();
+        this._state.viewMonth = d.getMonth();
+        this.render();
+      });
+    }
   }
 
   get _authorOptions() {
@@ -575,11 +622,12 @@ class OneLineHaDayPanel extends HTMLElement {
     const lastYearEntry = this._getLastYearEntryForCurrentUser();
     const streakDays = this._computeStreakDays();
 
-    // Month label and calendar grid for the current month.
-    const baseDate = new Date(todayIso);
+    const viewYear = this._state.viewYear ?? new Date(todayIso).getFullYear();
+    const viewMonth = this._state.viewMonth ?? new Date(todayIso).getMonth();
+
     const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-    const monthLabel = `${monthNames[baseDate.getMonth()]} ${baseDate.getFullYear()}`;
-    const gridCells = this._buildMonthGrid(baseDate.getFullYear(), baseDate.getMonth());
+    const monthLabel = `${monthNames[viewMonth]} ${viewYear}`;
+    const gridCells = this._buildMonthGrid(viewYear, viewMonth);
 
     // Entries for the selected calendar date across years.
     const entriesForSelectedDay = this._state.entries.filter((e) => {
@@ -683,7 +731,7 @@ class OneLineHaDayPanel extends HTMLElement {
               <option value="private">Private — only me</option>
               <option value="shared">Shared — selected people</option>
             </select>
-            <label style="display:block;margin-top:12px">Entry</label>
+            <label style="display:block;margin-top:12px">Entry (saving for ${selectedDate})</label>
             <textarea id="draft-input" placeholder="Write one line… (Ctrl/Cmd+Enter to save)"></textarea>
             <div class="attach-row">
               <div class="photo-drop">
@@ -702,7 +750,7 @@ class OneLineHaDayPanel extends HTMLElement {
               </div>
             ` : ''}
             <div class="filter-row" style="margin-top:20px">
-              <label class="small">Showing entries for ${selectedDate}</label>
+              <label class="small">Showing entries for calendar day ${selectedDate.slice(5)}</label>
             </div>
             <div class="filter-row" style="margin-top:8px">
               <label class="small">Filter by author</label>
@@ -717,8 +765,8 @@ class OneLineHaDayPanel extends HTMLElement {
             <div class="calendar-header">
               <div class="month-label">${monthLabel}</div>
               <div class="calendar-nav">
-                <button disabled>&lt; Prev</button>
-                <button disabled>Next &gt;</button>
+                <button id="prev-month">&lt; Prev</button>
+                <button id="next-month">Next &gt;</button>
               </div>
             </div>
             <div class="weekday-row">
