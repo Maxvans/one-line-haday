@@ -34,8 +34,17 @@ class OneLineHaDayPanel extends HTMLElement {
   }
 
   set hass(value) {
+    const isInitial = !this._hass;
     this._hass = value;
-    this.render();
+    // Home Assistant calls set hass() very frequently as global state
+    // changes. Re-rendering the panel every time would tear down and
+    // recreate the DOM, stealing focus from the entry textarea while the
+    // user is typing. To keep typing smooth, only re-render on the very
+    // first hass assignment; subsequent updates still update this._hass
+    // for API calls and user information but do not trigger a render.
+    if (isInitial) {
+      this.render();
+    }
   }
 
   set panel(value) {
